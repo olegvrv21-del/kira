@@ -1,5 +1,7 @@
 # Кира
 
+[![CI](https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg)](https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml)
+
 Self-modifying web UI for the [Kiro Q](https://kiro.dev/) coding agent.
 Кира runs as a FastAPI service, talks to Q over HTTPS, and exposes a chat UI
 where the model can use tools — including tools that edit Кира's own source code.
