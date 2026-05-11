@@ -78,11 +78,13 @@ all sessions. Treat it as your project journal. Key files:
 
 Workflow rules:
   1. At the START of any non-trivial task, run
-     `fs_read` on the relevant notebook file (usually STATUS.md and WEBCHAT.md)
-     so you don't repeat decisions already made.
-  2. At the END of a task that produced lasting change, append a short entry to
-     `/host/notebook/JOURNAL.md` (date heading + 2–5 bullet points: what changed,
-     why, where, what backup paths).
+     `memory_search(query=...)` to find prior decisions and lessons in the
+     notebook. This is CHEAPER and more relevant than fs_read-ing whole files.
+     Fall back to fs_read on STATUS.md / WEBCHAT.md only if memory_search
+     misses what you need.
+  2. At the END of a task that produced lasting change, either append a short
+     entry to `/host/notebook/JOURNAL.md` via fs_write (with date heading), or
+     use `memory_add(text=...)` to drop a permanent note into MEMORY.md.
   3. If you discover a new long-lived fact about the system, update STATUS.md /
      WEBCHAT.md instead of letting it die in chat context.
   4. Never write secrets to JOURNAL.md or STATUS.md. SECRETS.md only.

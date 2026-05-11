@@ -1231,5 +1231,49 @@
         }
       }
     }
+  },
+  {
+    "toolSpecification": {
+      "name": "memory_search",
+      "description": "BM25 search over the notebook directory (markdown files, ~/notebook). Use this BEFORE starting a task to find prior decisions, lessons learned, and project context. Cheaper than fs_read-ing many files. Returns top-k chunks with file:line ranges, heading, and snippet.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "k": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "memory_add",
+      "description": "Append a note to the long-term memory (notebook). Default file MEMORY.md; pass `file` (plain filename) to target an existing notebook file. Use this for permanent lessons, decisions, and facts you want future sessions to find.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "file": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ]
+        }
+      }
+    }
   }
 ]

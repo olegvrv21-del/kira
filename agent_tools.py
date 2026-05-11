@@ -323,6 +323,35 @@ def _not_supported(args, cwd):
     raise RuntimeError("browser tools require KIRA_SANDBOX=1")
 
 
+def memory_search(args: dict[str, Any], cwd: str) -> str:
+    import agent_memory
+    q = (args.get("query") or "").strip()
+    if not q:
+        raise ValueError("query is required")
+    k = int(args.get("k") or 5)
+    hits = agent_memory.memory.search(q, k=k)
+    if not hits:
+        return f"MEMORY no hits for {q!r}"
+    out = [f"MEMORY {len(hits)} hits for {q!r}:"]
+    for h in hits:
+        head = (" [" + h["heading"] + "]") if h.get("heading") else ""
+        out.append(f"\n--- {h['file']}:{h['start_line']}-{h['end_line']}{head} "
+                   f"(score={h['score']}) ---")
+        out.append(h["snippet"])
+    return "\n".join(out)
+
+
+def memory_add(args: dict[str, Any], cwd: str) -> str:
+    import agent_memory
+    text = (args.get("text") or "").strip()
+    if not text:
+        raise ValueError("text is required")
+    file = args.get("file")
+    info = agent_memory.memory.add(text, file=file)
+    return (f"MEMORY appended file={info['file']} "
+            f"bytes={info['bytes']} lines={info['lines']}")
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     import agent_skills
     name = (args.get("name") or "").strip()
@@ -364,6 +393,8 @@ TOOLS = {
     "dev_loop": _not_supported,
     "load_skill": load_skill_tool,
     "verify_change": verify_change,
+    "memory_search": memory_search,
+    "memory_add": memory_add,
 }
 
 

@@ -1157,6 +1157,53 @@ print(('VERIFY=OK' if ok else 'VERIFY=FAIL')+'\\n'+'\\n'.join(out))
 
 # ---------- dispatcher ----------
 
+# ---------- memory (notebook BM25) ----------
+
+def _memory_index():
+    """Lazily build a sandbox-local MemoryIndex pointed at /host/notebook."""
+    global _MEMORY_SINGLETON
+    if _MEMORY_SINGLETON is None:
+        import os, importlib.util, sys
+        # ensure host webchat source dir is on sys.path so we can import
+        # agent_memory (self-edit mount provides it at /host/webchat)
+        for p in ("/host/webchat", "/workspace"):
+            if p not in sys.path and os.path.isdir(p):
+                sys.path.insert(0, p)
+        os.environ.setdefault("KIRA_NOTEBOOK_DIR", "/host/notebook")
+        import agent_memory  # type: ignore
+        _MEMORY_SINGLETON = agent_memory.memory
+    return _MEMORY_SINGLETON
+
+_MEMORY_SINGLETON = None
+
+
+def memory_search(args: dict[str, Any], cwd: str, sid: str) -> str:
+    q = (args.get("query") or "").strip()
+    if not q:
+        raise ValueError("query is required")
+    k = int(args.get("k") or 5)
+    hits = _memory_index().search(q, k=k)
+    if not hits:
+        return f"MEMORY no hits for {q!r}"
+    out = [f"MEMORY {len(hits)} hits for {q!r}:"]
+    for h in hits:
+        head = (" [" + h["heading"] + "]") if h.get("heading") else ""
+        out.append(f"\n--- {h['file']}:{h['start_line']}-{h['end_line']}{head} "
+                   f"(score={h['score']}) ---")
+        out.append(h["snippet"])
+    return "\n".join(out)
+
+
+def memory_add(args: dict[str, Any], cwd: str, sid: str) -> str:
+    text = (args.get("text") or "").strip()
+    if not text:
+        raise ValueError("text is required")
+    file = args.get("file")
+    info = _memory_index().add(text, file=file)
+    return (f"MEMORY appended file={info['file']} "
+            f"bytes={info['bytes']} lines={info['lines']}")
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str, sid: str) -> str:
     import agent_skills
     name = (args.get("name") or "").strip()
@@ -1199,6 +1246,8 @@ TOOLS = {
     "find_references": find_references,
     "rename_symbol": rename_symbol,
     "diagnostics": diagnostics,
+    "memory_search": memory_search,
+    "memory_add": memory_add,
 }
 
 

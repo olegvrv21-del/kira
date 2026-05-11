@@ -127,6 +127,18 @@ async def hooks_endpoint():
     return {"status": agent_hooks.hooks_status(), "hooks": agent_hooks.list_hooks()}
 
 
+@app.get("/agent/memory")
+async def memory_status():
+    import agent_memory
+    return agent_memory.memory.status()
+
+
+@app.get("/agent/memory/search")
+async def memory_search_endpoint(q: str, k: int = 5):
+    import agent_memory
+    return {"query": q, "hits": agent_memory.memory.search(q, k=k)}
+
+
 @app.get("/agent/keys")
 async def keys_endpoint():
     return key_pool.status()
