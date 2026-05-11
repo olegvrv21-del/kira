@@ -31,6 +31,6 @@ check memory        /agent/memory        '"chunks"'
 # Tool count check: agent_tool_specs.json should ship via static or be on disk.
 if command -v jq >/dev/null 2>&1 && [ -f agent_tool_specs.json ]; then
   n=$(jq length agent_tool_specs.json)
-  if [ "$n" -ge 36 ]; then echo "OK   tool_specs_count=$n"; else echo "FAIL tool_specs_count=$n (<36)"; fail=1; fi
+  if [ "$n" -ge 37 ]; then echo "OK   tool_specs_count=$n"; else echo "FAIL tool_specs_count=$n (<37)"; fail=1; fi
 fi
 if [ $fail -eq 0 ]; then echo "--- ALL OK ---"; else echo "--- FAIL ---"; exit 1; fi

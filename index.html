@@ -2109,6 +2109,26 @@
                 }
               }
             }
+            else if (j.type === 'critic') {
+              const card = cards.get(j.id);
+              if (card) {
+                let bar = card.querySelector('.tool-critic');
+                if (!bar) {
+                  bar = document.createElement('div');
+                  bar.className = 'tool-critic';
+                  bar.style.cssText = 'margin:6px 0;padding:6px 10px;border-radius:6px;font-size:12px;';
+                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                }
+                const ok = j.verdict !== 'BLOCK';
+                bar.style.background = ok ? 'rgba(76,175,80,0.10)' : 'rgba(255,82,82,0.10)';
+                bar.style.borderLeft = `3px solid ${ok ? '#4caf50' : '#ff5252'}`;
+                bar.style.color = ok ? '#9ccc65' : '#ff8a80';
+                const issues = (j.issues || []).slice(0, 5)
+                  .map(s => '<div style="opacity:.8">· ' + s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + '</div>').join('');
+                bar.innerHTML = `<b>🔎 Critic: ${j.verdict}</b>` +
+                  (j.reason ? ' — ' + j.reason : '') + issues;
+              }
+            }
             else if (j.type === 'dev_loop_iter' || j.type === 'dev_loop_test' || j.type === 'dev_loop_done') {
               const card = cards.get(j.parent_id);
               if (card) {

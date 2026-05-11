@@ -914,9 +914,52 @@ async def run_agent(
                                             "content": [{"text": out_text}],
                                             "status": status})
                     continue
+                # ---- auto-critic before git_commit ----
+                critic_block = None
+                if (name == "git_commit"
+                        and os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True")):
+                    try:
+                        import agent_critic
+                        # Get diff to review: prefer the staged-but-unfinished diff,
+                        # i.e. what would be committed. For simplicity ask the
+                        # critic on `git diff HEAD`.
+                        diff_text = ""
+                        if USE_SANDBOX:
+                            try:
+                                import sandbox_runtime as sb_rt
+                                r = await asyncio.to_thread(
+                                    sb_rt.exec_argv, session_id,
+                                    ["git", "-c", "safe.directory=*",
+                                     "-c", "core.pager=cat",
+                                     "diff", "HEAD"], "/host/webchat", 30)
+                                diff_text = r[1]
+                            except Exception:
+                                diff_text = ""
+                        else:
+                            import subprocess
+                            r = subprocess.run([
+                                "git", "-c", "safe.directory=*",
+                                "-c", "core.pager=cat",
+                                "-C", cwd or ".", "diff", "HEAD"],
+                                capture_output=True, text=True, timeout=30)
+                            diff_text = r.stdout
+                        verdict = await agent_critic.review_diff(
+                            api_key, diff_text,
+                            intent=(args.get("message") if isinstance(args, dict) else "") or "")
+                        yield _sse({"type": "critic", "id": tid,
+                                     "verdict": verdict.get("verdict"),
+                                     "reason": verdict.get("reason", ""),
+                                     "issues": verdict.get("issues", [])})
+                        if verdict.get("verdict") == "BLOCK":
+                            critic_block = verdict.get("reason") or "critic blocked the commit"
+                    except Exception as e:
+                        yield _sse({"type": "critic", "id": tid,
+                                     "verdict": "OK",
+                                     "reason": f"critic-error: {e}",
+                                     "issues": []})
                 # ---- pre_tool hooks ----
                 pre_events = []
-                deny_msg = None
+                deny_msg = critic_block
                 try:
                     pre_events = agent_hooks.run_pre_tool(session_id, name, args)
                 except Exception as e:

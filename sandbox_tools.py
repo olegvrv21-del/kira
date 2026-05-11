@@ -1157,6 +1157,74 @@ print(('VERIFY=OK' if ok else 'VERIFY=FAIL')+'\\n'+'\\n'.join(out))
 
 # ---------- dispatcher ----------
 
+# ---------- critic (review_changes) ----------
+
+def _get_git_diff(sid: str, cwd: str, ref: str | None = None) -> str:
+    """Get the current diff for review.
+
+    If ref is None: combined `git diff HEAD` (staged + working tree).
+    Else: `git diff <ref>`.
+    """
+    cwd_c = _cpath(cwd, sid) if cwd else "/host/webchat"
+    if not cwd_c or cwd_c == "/workspace":
+        cwd_c = "/host/webchat"
+    cmd = ["docker", "exec", "-w", cwd_c,
+           sb.ensure_container(sid),
+           "git", "-c", "safe.directory=*", "-c", "core.pager=cat",
+           "diff", ref or "HEAD"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        # fallback: maybe no HEAD yet -> diff vs empty
+        return r.stdout + r.stderr
+    return r.stdout
+
+
+def review_changes(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Run the critic on a diff. Either diff= is provided, or it is taken
+    from `git diff HEAD` in the current cwd.
+    """
+    diff = args.get("diff")
+    if not diff:
+        ref = args.get("ref")
+        diff = _get_git_diff(sid, cwd, ref=ref)
+    if not (diff or "").strip():
+        return "REVIEW=OK (no changes to review)"
+    intent = args.get("intent") or ""
+    api_key = os.environ.get("KIRO_API_KEY", "")
+    if not api_key:
+        return "REVIEW=OK (critic disabled: no KIRO_API_KEY)"
+    model = args.get("model")
+    # Critic runs on host (uses our key + key_pool). Bridge via sync wrapper.
+    import asyncio, sys
+    for p in ("/host/webchat",):
+        if p not in sys.path and os.path.isdir(p):
+            sys.path.insert(0, p)
+    import agent_critic  # type: ignore
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            verdict = loop.run_until_complete(
+                agent_critic.review_diff(api_key, diff, intent=intent,
+                                          model=model))
+        finally:
+            loop.close()
+    except Exception as e:
+        return f"REVIEW=OK (critic-error: {type(e).__name__}: {e})"
+    v = verdict.get("verdict", "OK")
+    reason = verdict.get("reason", "")
+    issues = verdict.get("issues", []) or []
+    head = f"REVIEW={v}"
+    if reason:
+        head += f" reason: {reason}"
+    lines = [head]
+    for i in issues[:20]:
+        lines.append(f"  - {i}")
+    return "\n".join(lines)
+
+
+import os  # noqa: E402 (used by review_changes above)
+
+
 # ---------- memory (notebook BM25) ----------
 
 def _memory_index():
@@ -1248,6 +1316,7 @@ TOOLS = {
     "diagnostics": diagnostics,
     "memory_search": memory_search,
     "memory_add": memory_add,
+    "review_changes": review_changes,
 }
 
 

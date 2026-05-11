@@ -323,6 +323,41 @@ def _not_supported(args, cwd):
     raise RuntimeError("browser tools require KIRA_SANDBOX=1")
 
 
+def review_changes(args: dict[str, Any], cwd: str) -> str:
+    import asyncio, os, subprocess
+    diff = args.get("diff")
+    if not diff:
+        ref = args.get("ref") or "HEAD"
+        r = subprocess.run(["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
+                            "-C", cwd or ".", "diff", ref],
+                           capture_output=True, text=True, timeout=30)
+        diff = r.stdout
+    if not (diff or "").strip():
+        return "REVIEW=OK (no changes to review)"
+    api_key = os.environ.get("KIRO_API_KEY", "")
+    if not api_key:
+        return "REVIEW=OK (critic disabled: no KIRO_API_KEY)"
+    import agent_critic
+    intent = args.get("intent") or ""
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            v = loop.run_until_complete(
+                agent_critic.review_diff(api_key, diff, intent=intent,
+                                          model=args.get("model")))
+        finally:
+            loop.close()
+    except Exception as e:
+        return f"REVIEW=OK (critic-error: {type(e).__name__}: {e})"
+    head = f"REVIEW={v.get('verdict', 'OK')}"
+    if v.get("reason"):
+        head += f" reason: {v['reason']}"
+    lines = [head]
+    for i in (v.get("issues") or [])[:20]:
+        lines.append(f"  - {i}")
+    return "\n".join(lines)
+
+
 def memory_search(args: dict[str, Any], cwd: str) -> str:
     import agent_memory
     q = (args.get("query") or "").strip()
@@ -395,6 +430,7 @@ TOOLS = {
     "verify_change": verify_change,
     "memory_search": memory_search,
     "memory_add": memory_add,
+    "review_changes": review_changes,
 }
 
 

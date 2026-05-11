@@ -1275,5 +1275,31 @@
         }
       }
     }
+  },
+  {
+    "toolSpecification": {
+      "name": "review_changes",
+      "description": "Critic agent: a SECOND LLM reviews a diff for obvious problems (secrets committed, syntax errors, removed tests, dangerous shell ops, disabled security). Returns REVIEW=OK or REVIEW=BLOCK with reasons. If `diff` is not provided, defaults to `git diff HEAD` in the current cwd. Call this BEFORE git_commit on non-trivial changes.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "diff": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "intent": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": []
+        }
+      }
+    }
   }
 ]
