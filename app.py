@@ -605,7 +605,6 @@ async def agent_endpoint(req: AgentRequest):
             hist = []
             _AGENT_SESSIONS[sid] = hist
         baseline = agent_store.get_session_credits(sid)
-        last_credits = 0.0
         agent_images = None
         if req.images:
             agent_images = []
