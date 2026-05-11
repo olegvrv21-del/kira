@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    labels: ["deps", "python"]
+    commit-message:
+      prefix: "pip"
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    labels: ["deps", "ci"]
+    commit-message:
+      prefix: "ci"
+      include: scope
+
+  - package-ecosystem: docker
+    directory: "/sandbox"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    labels: ["deps", "docker"]
+    commit-message:
+      prefix: "docker"
+      include: scope
