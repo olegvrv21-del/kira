@@ -1,0 +1,8 @@
+# Optional: enables KIRA_MEMORY_EMBED=1 (semantic search over notebook).
+# Heavy (~1.5 GB total: torch CPU + transformers + model on first use).
+# Install with: pip install -r requirements.txt -r requirements-embed.txt
+# Or: pip install --index-url https://download.pytorch.org/whl/cpu torch
+#     pip install sentence-transformers
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+sentence-transformers

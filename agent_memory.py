@@ -113,6 +113,34 @@ def _split_chunks(text: str, path: str) -> list[dict]:
     return chunks
 
 
+# ---- optional embeddings (sentence-transformers) ----
+#
+# When KIRA_MEMORY_EMBED=1 we additionally compute dense vectors for each
+# chunk and blend cosine similarity with BM25 (default 70% semantic /
+# 30% bm25). Falls back gracefully if the package is missing.
+_EMBED_MODEL_NAME = os.environ.get("KIRA_EMBED_MODEL", "all-MiniLM-L6-v2")
+_EMBED_BLEND = float(os.environ.get("KIRA_EMBED_BLEND", "0.7"))  # weight of semantic score
+
+_embed_model = None
+_embed_load_error: str | None = None
+
+
+def _get_embed_model():
+    global _embed_model, _embed_load_error
+    if _embed_model is not None or _embed_load_error is not None:
+        return _embed_model
+    if os.environ.get("KIRA_MEMORY_EMBED") != "1":
+        return None
+    try:
+        from sentence_transformers import SentenceTransformer  # noqa: WPS433
+
+        _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
+        return _embed_model
+    except Exception as e:  # ImportError or model download failure
+        _embed_load_error = f"{type(e).__name__}: {e}"
+        return None
+
+
 class MemoryIndex:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -124,6 +152,7 @@ class MemoryIndex:
         self.files: list[str] = []
         self.excluded_files: list[str] = []
         self._tokens: list[list[str]] = []
+        self._embeddings = None  # numpy array (N, D) or None
 
     # ---- index build ----
 
@@ -193,21 +222,31 @@ class MemoryIndex:
         self.files = rel_files
         self.excluded_files = excluded
 
+        # ---- optional embeddings rebuild ----
+        self._embeddings = None
+        model = _get_embed_model()
+        if model is not None and chunks:
+            try:
+                texts = [c["text"][:1500] for c in chunks]  # cap to keep encoding fast
+                emb = model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+                self._embeddings = emb
+            except Exception as e:  # pragma: no cover
+                global _embed_load_error
+                _embed_load_error = f"encode failed: {type(e).__name__}: {e}"
+
     # ---- search ----
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
-        self.ensure()
+    def _bm25_scores(self, query: str) -> list[tuple[float, int]]:
         qt = _tokenize(query)
         if not qt or not self.chunks:
             return []
         N = len(self.chunks)
         k1, b = 1.5, 0.75
-        # idf per query term
         idf: dict[str, float] = {}
         for w in set(qt):
             n = self.df.get(w, 0)
             idf[w] = math.log((N - n + 0.5) / (n + 0.5) + 1.0)
-        scores: list[tuple[float, int]] = []
+        scores = []
         for i, tks in enumerate(self._tokens):
             if not tks:
                 continue
@@ -219,8 +258,44 @@ class MemoryIndex:
                     continue
                 f = tf[w]
                 score += idf.get(w, 0.0) * (f * (k1 + 1)) / (f + k1 * (1 - b + b * dl / (self.avgdl or 1)))
-            if score > 0:
-                scores.append((score, i))
+            scores.append((score, i))
+        return scores
+
+    def _semantic_scores(self, query: str) -> list[tuple[float, int]] | None:
+        if self._embeddings is None:
+            return None
+        model = _get_embed_model()
+        if model is None:
+            return None
+        try:
+            qv = model.encode([query], show_progress_bar=False, normalize_embeddings=True)
+            sims = (self._embeddings @ qv.T).flatten()
+            return [(float(s), i) for i, s in enumerate(sims)]
+        except Exception:  # pragma: no cover
+            return None
+
+    def search(self, query: str, k: int = 5) -> list[dict]:
+        self.ensure()
+        if not self.chunks:
+            return []
+        bm25 = self._bm25_scores(query)
+        sem = self._semantic_scores(query)
+        if sem is not None:
+            # Min-max normalise BM25 to [0,1] for fair blending with cosine.
+            if bm25:
+                bmax = max(s for s, _ in bm25) or 1.0
+                bm25_norm = {i: s / bmax for s, i in bm25}
+            else:
+                bm25_norm = {}
+            w = _EMBED_BLEND
+            blended: dict[int, float] = {}
+            for sc, i in sem:
+                blended[i] = w * sc
+            for i, sc_n in bm25_norm.items():
+                blended[i] = blended.get(i, 0.0) + (1 - w) * sc_n
+            scores = [(sc, i) for i, sc in blended.items() if sc > 0]
+        else:
+            scores = [(s, i) for s, i in bm25 if s > 0]
         scores.sort(reverse=True)
         out = []
         for sc, i in scores[:k]:
@@ -236,6 +311,32 @@ class MemoryIndex:
                 }
             )
         return out
+
+    # ---- status ----
+
+    def status(self) -> dict:
+        self.ensure()
+        st = {
+            "root": str(_root()),
+            "chunks": len(self.chunks),
+            "files": self.files,
+            "excluded": self.excluded_files,
+            "avgdl": round(self.avgdl, 1),
+            "mtime": self.mtime,
+        }
+        if self._embeddings is not None:
+            st["embeddings"] = {
+                "enabled": True,
+                "model": _EMBED_MODEL_NAME,
+                "dim": int(self._embeddings.shape[1]),
+                "blend_weight": _EMBED_BLEND,
+            }
+        else:
+            st["embeddings"] = {
+                "enabled": False,
+                "reason": _embed_load_error or ("set KIRA_MEMORY_EMBED=1 to enable"),
+            }
+        return st
 
     # ---- add ----
 
@@ -258,19 +359,6 @@ class MemoryIndex:
             f.write(block)
         self.rebuild()
         return {"file": rel, "lines": len(text.splitlines()) + 2, "bytes": len(block.encode("utf-8"))}
-
-    # ---- status ----
-
-    def status(self) -> dict:
-        self.ensure()
-        return {
-            "root": str(_root()),
-            "files": self.files,
-            "excluded": self.excluded_files,
-            "chunks": len(self.chunks),
-            "avgdl": round(self.avgdl, 2),
-            "mtime": self.mtime,
-        }
 
 
 memory = MemoryIndex()
