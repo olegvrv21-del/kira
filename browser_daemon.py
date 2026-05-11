@@ -8,11 +8,28 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from playwright.async_api import Browser, Page, async_playwright
 from pydantic import BaseModel
+
+_log = logging.getLogger("browser_daemon")
+_DEBUG = os.environ.get("KIRA_DAEMON_DEBUG") == "1"
+
+
+def _err(e: BaseException) -> dict:
+    """Return a stack-trace-safe error dict; full details only when debug is on.
+
+    Daemons listen on localhost so the risk is low, but CodeQL flags exposed
+    exception text as py/stack-trace-exposure. Hide details by default.
+    """
+    _log.exception("daemon error: %s", e)
+    if _DEBUG:
+        return _err(e)
+    return {"error": type(e).__name__}
 
 
 class NavReq(BaseModel):
@@ -167,7 +184,7 @@ async def eval_expr(req: EvalReq):
                 serialized = repr(result)
             return {"result": serialized}
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
 
 
 @app.post("/screenshot")
@@ -194,7 +211,7 @@ async def click(req: ClickReq):
             await page.click(req.selector, timeout=req.timeout_ms)
             return {"ok": True, "url": page.url}
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
 
 
 @app.post("/type")
@@ -205,7 +222,7 @@ async def type_in(req: TypeReq):
             await page.fill(req.selector, req.text, timeout=req.timeout_ms)
             return {"ok": True}
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
 
 
 @app.post("/wait")
@@ -219,7 +236,7 @@ async def wait(req: WaitReq):
                 await page.wait_for_timeout(req.ms)
             return {"ok": True}
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
 
 
 @app.post("/console_logs")
@@ -280,7 +297,7 @@ async def accessibility(req: dict | None = None):
                     kwargs["root"] = el
             snap = await page.accessibility.snapshot(**kwargs)
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
         return {"tree": snap, "url": page.url}
 
 
@@ -319,7 +336,7 @@ async def emulate(req: EmulateReq):
                 await page.emulate_media(media=req.media)
                 applied["media"] = req.media
         except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+            return _err(e)
         return {"ok": True, "applied": applied, "url": page.url}
 
 

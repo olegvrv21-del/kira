@@ -11,25 +11,34 @@ Images embedded as base64 inflate rows; SQLite handles BLOBs of MB size fine.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-_USER_MSG_RE = re.compile(r"--- USER MESSAGE BEGIN ---\n?(.*?)--- USER MESSAGE END ---", re.DOTALL)
+_USER_MSG_BEGIN = "--- USER MESSAGE BEGIN ---"
+_USER_MSG_END = "--- USER MESSAGE END ---"
 
 
 def extract_user_text(content: str) -> str | None:
-    """Pull the actual user prompt out of Kiro's wrapper template."""
+    """Pull the actual user prompt out of Kiro's wrapper template.
+
+    Uses plain string slicing (no regex) to avoid catastrophic backtracking
+    on long inputs starting with the BEGIN marker (CodeQL py/polynomial-redos).
+    """
     if not isinstance(content, str):
         return None
-    m = _USER_MSG_RE.search(content)
-    if m:
-        t = m.group(1).strip()
-        return t or None
-    # Fallback: not wrapped (e.g. very first system-prompt turn) — caller handles.
-    return None
+    i = content.find(_USER_MSG_BEGIN)
+    if i < 0:
+        return None
+    i += len(_USER_MSG_BEGIN)
+    if i < len(content) and content[i] == "\n":
+        i += 1
+    j = content.find(_USER_MSG_END, i)
+    if j < 0:
+        return None
+    t = content[i:j].strip()
+    return t or None
 
 
 DB_PATH = Path(__file__).parent / "agent_sessions.db"

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import struct
 import time
 import uuid
@@ -12,6 +13,11 @@ from pydantic import BaseModel
 
 import agent_runtime
 import agent_skills
+
+# Controls whether internal error details are included in HTTP/SSE responses.
+# Off by default (avoids stack-trace exposure; CodeQL py/stack-trace-exposure).
+# Set KIRA_ERR_VERBOSE=1 in dev or when debugging upstream issues.
+_ERR_VERBOSE = os.environ.get("KIRA_ERR_VERBOSE") == "1"
 
 OMNI_URL = os.environ.get("OMNI_URL", "http://localhost:8128/v1")
 OMNI_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -482,7 +488,9 @@ async def stream_q(model_id: str, msgs: list):
         yield _chunk(label, finish="stop")
         yield b"data: [DONE]\n\n"
     except Exception as e:
-        yield _sse({"error": f"q upstream: {e!s}"})
+        print(f"[stream_q] {type(e).__name__}: {e}")
+        msg = f"q upstream: {e!s}" if _ERR_VERBOSE else f"q upstream: {type(e).__name__}"
+        yield _sse({"error": msg})
 
 
 async def stream_omni(model: str, msgs: list):
@@ -506,7 +514,9 @@ async def stream_omni(model: str, msgs: list):
                     if line:
                         yield (line + "\n").encode("utf-8")
         except Exception as e:
-            yield _sse({"error": f"upstream: {e!s}"})
+            print(f"[stream_omni] {type(e).__name__}: {e}")
+            msg = f"upstream: {e!s}" if _ERR_VERBOSE else f"upstream: {type(e).__name__}"
+            yield _sse({"error": msg})
 
 
 @app.post("/chat")
@@ -783,13 +793,24 @@ async def agent_session_delete(sid: str):
     return JSONResponse({"ok": ok})
 
 
+_SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_WORKSPACES_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces"))
+
+
+def _safe_workspace(sid: str) -> str:
+    if not _SID_RE.match(sid or ""):
+        raise HTTPException(status_code=400, detail="invalid sid")
+    base = os.path.realpath(os.path.join(_WORKSPACES_ROOT, sid))
+    if not (base == _WORKSPACES_ROOT or base.startswith(_WORKSPACES_ROOT + os.sep)):
+        raise HTTPException(status_code=400, detail="invalid sid")
+    return base
+
+
 @app.get("/agent/file/{session_id}/{path:path}")
 async def agent_file(session_id: str, path: str):
-    import os
-
-    base = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces", session_id))
+    base = _safe_workspace(session_id)
     target = os.path.realpath(os.path.join(base, path))
-    if not target.startswith(base + os.sep) and target != base:
+    if not (target == base or target.startswith(base + os.sep)):
         raise HTTPException(status_code=400, detail="invalid path")
     if not os.path.isfile(target):
         raise HTTPException(status_code=404)
@@ -798,13 +819,7 @@ async def agent_file(session_id: str, path: str):
 
 @app.post("/agent/upload/{sid}")
 async def agent_upload(sid: str, files: list[UploadFile] = File(...)):
-    import os
-    import re
-
-    base = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces", sid))
-    root = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces"))
-    if not base.startswith(root + os.sep):
-        raise HTTPException(status_code=400, detail="invalid sid")
+    base = _safe_workspace(sid)
     os.makedirs(base, exist_ok=True)
     saved = []
     for f in files:
@@ -863,4 +878,6 @@ async def usage():
             "unit": ub.get("displayNamePlural") or ub.get("displayName") or "Credits",
         }
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        # Don't leak internals to clients (CodeQL py/stack-trace-exposure).
+        print(f"[usage] failed: {type(e).__name__}: {e}")
+        return JSONResponse({"error": type(e).__name__}, status_code=500)

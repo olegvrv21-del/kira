@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import platform
 import struct
 import uuid
@@ -89,6 +90,18 @@ def _build_system_prompt() -> str:
 SYSTEM_PROMPT = _build_system_prompt()
 WORKSPACES = ROOT / "workspaces"
 WORKSPACES.mkdir(exist_ok=True)
+
+# Session IDs are server-generated hex strings, but clients can also supply
+# their own (e.g. from /agent/upload before a session exists). Validate strictly
+# to prevent path traversal — anything not matching is rejected/replaced.
+_SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _safe_sid(sid: str | None) -> str:
+    if sid and _SID_RE.match(sid):
+        return sid
+    return uuid.uuid4().hex[:12]
+
 
 MAX_TURNS = 25
 
@@ -736,8 +749,12 @@ async def run_agent(
     history: list[dict] | None = None,
     images: list[dict] | None = None,
 ) -> AsyncIterator[bytes]:
-    session_id = session_id or uuid.uuid4().hex[:12]
+    session_id = _safe_sid(session_id)
     cwd_path = (WORKSPACES / session_id).resolve()
+    # Defence-in-depth: even after regex validation, ensure the resolved path
+    # is still inside WORKSPACES (covers symlink tricks if anyone pre-creates one).
+    if not str(cwd_path).startswith(str(WORKSPACES.resolve()) + os.sep):
+        raise ValueError("invalid session_id")
     cwd_path.mkdir(parents=True, exist_ok=True)
     # Inside sandbox the agent sees /workspace; outside it sees the host path.
     cwd = "/workspace" if USE_SANDBOX else str(cwd_path)

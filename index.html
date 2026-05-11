@@ -1146,7 +1146,15 @@
     /* chats */
     function loadChats() { try { chats = JSON.parse(localStorage.getItem(LS_CHATS) || '[]') || []; } catch { chats = []; } }
     function saveChats() { localStorage.setItem(LS_CHATS, JSON.stringify(chats)); }
-    function makeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+    function makeId() {
+      // Use cryptographically strong randomness (avoids Math.random predictability;
+      // also satisfies CodeQL js/insecure-randomness for IDs used in session paths).
+      const buf = new Uint8Array(6);
+      (self.crypto || self.msCrypto).getRandomValues(buf);
+      let s = '';
+      for (const b of buf) s += b.toString(36).padStart(2, '0');
+      return Date.now().toString(36) + s.slice(0, 8);
+    }
     function deriveTitle(h) {
       const u = h.find(m => m.role === 'user');
       if (!u) return t('new_chat');
