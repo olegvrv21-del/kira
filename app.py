@@ -114,6 +114,11 @@ MODEL_IDS = {m["id"] for m in MODELS}
 
 app = FastAPI()
 
+# Optional auth + per-IP rate limiting (no-op unless env flags set).
+import agent_auth
+
+_auth_status = agent_auth.install(app)
+
 
 class ChatRequest(BaseModel):
     messages: list
@@ -222,6 +227,11 @@ async def metrics_endpoint(window: float | None = None):
 @app.get("/agent/metrics/{sid}")
 async def metrics_sid(sid: str, window: float | None = None):
     return agent_store.compute_metrics(sid=sid, window_seconds=window)
+
+
+@app.get("/agent/auth_status")
+async def auth_status():
+    return {"install": _auth_status, "runtime": agent_auth.snapshot()}
 
 
 @app.get("/agent/coverage")

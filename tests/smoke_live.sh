@@ -29,6 +29,7 @@ check metrics       /agent/metrics       '"by_tool"'
 check keys          /agent/keys          '"pool_size"'
 check memory        /agent/memory        '"chunks"'
 check coverage      /agent/coverage      '"ok"'
+check auth          /agent/auth_status   '"runtime"'
 # Tool count check: agent_tool_specs.json should ship via static or be on disk.
 if command -v jq >/dev/null 2>&1 && [ -f agent_tool_specs.json ]; then
   n=$(jq length agent_tool_specs.json)
