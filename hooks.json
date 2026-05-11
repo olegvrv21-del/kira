@@ -1,0 +1,31 @@
+{
+  "_comment": "Default hooks for Кира. Edit and webchat will pick up changes (mtime-cached). See agent_hooks.py docstring for format.",
+  "hooks": [
+    {
+      "id": "deny-etc-write",
+      "event": "pre_tool",
+      "match": {"tool": ["fs_write", "patch"],
+                "args_regex": {"path": "^/etc/"}},
+      "action": {"type": "deny", "message": "editing /etc is forbidden"}
+    },
+    {
+      "id": "deny-rm-rf-root",
+      "event": "pre_tool",
+      "match": {"tool": "execute_bash",
+                "args_regex": {"command": "rm\\s+-rf\\s+/(\\s|$)"}},
+      "action": {"type": "deny", "message": "refusing to rm -rf /"}
+    },
+    {
+      "id": "log-git-commit",
+      "event": "post_tool",
+      "match": {"tool": "git_commit", "status": "success"},
+      "action": {"type": "log", "message": "Кира committed her own code"}
+    },
+    {
+      "id": "log-rollback",
+      "event": "post_tool",
+      "match": {"tool": "fs_write", "status": "error"},
+      "action": {"type": "log", "message": "fs_write failed"}
+    }
+  ]
+}

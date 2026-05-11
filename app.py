@@ -120,6 +120,12 @@ async def skills_list():
     return {"skills": agent_skills.list_skills()}
 
 
+@app.get("/agent/hooks")
+async def hooks_endpoint():
+    import agent_hooks
+    return {"status": agent_hooks.hooks_status(), "hooks": agent_hooks.list_hooks()}
+
+
 @app.get("/skills/{name}")
 async def skill_get(name: str):
     body = agent_skills.load_skill(name)

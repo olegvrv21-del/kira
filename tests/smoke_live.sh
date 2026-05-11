@@ -24,9 +24,10 @@ check root_iframe   /                    "type === 'iframe'"
 check plan_empty    /agent/plan/zzz      '"items":\[\]'
 check actions_list  /agent/actions       '"actions"'
 check limits        /agent/limits        'session_limit'
+check hooks         /agent/hooks         '"hooks"'
 # Tool count check: agent_tool_specs.json should ship via static or be on disk.
 if command -v jq >/dev/null 2>&1 && [ -f agent_tool_specs.json ]; then
   n=$(jq length agent_tool_specs.json)
-  if [ "$n" -ge 29 ]; then echo "OK   tool_specs_count=$n"; else echo "FAIL tool_specs_count=$n (<29)"; fail=1; fi
+  if [ "$n" -ge 33 ]; then echo "OK   tool_specs_count=$n"; else echo "FAIL tool_specs_count=$n (<33)"; fail=1; fi
 fi
 if [ $fail -eq 0 ]; then echo "--- ALL OK ---"; else echo "--- FAIL ---"; exit 1; fi

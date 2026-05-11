@@ -24,6 +24,7 @@ import httpx
 
 import q_client
 import agent_skills
+import agent_hooks
 
 # Optional cost-limit hook installed by app.py. Signature:
 #   (session_id: str, current_turn_credits: float) -> str | None
@@ -791,12 +792,40 @@ async def run_agent(
                                             "content": [{"text": out_text}],
                                             "status": status})
                     continue
-                if USE_SANDBOX:
+                # ---- pre_tool hooks ----
+                pre_events = []
+                deny_msg = None
+                try:
+                    pre_events = agent_hooks.run_pre_tool(session_id, name, args)
+                except Exception as e:
+                    pre_events = [{"hook_id": "_error", "event": "pre_tool",
+                                     "type": "log",
+                                     "message": f"hook error: {e}", "tool": name}]
+                for ev_hook in pre_events:
+                    yield _sse({**ev_hook, "type": "hook", "id": tid,
+                                 "action_type": ev_hook.get("type")})
+                    if ev_hook.get("type") == "deny":
+                        deny_msg = ev_hook.get("message") or "denied by hook"
+                if deny_msg is not None:
+                    out = f"HOOK_DENY: {deny_msg}"
+                    status, imgs = "error", None
+                elif USE_SANDBOX:
                     status, out, imgs = await asyncio.to_thread(
                         toolkit.run_tool, name, args, cwd, session_id)
                 else:
                     status, out, imgs = await asyncio.to_thread(
                         toolkit.run_tool, name, args, cwd)
+                # ---- post_tool hooks ----
+                try:
+                    post_events = agent_hooks.run_post_tool(
+                        session_id, name, args, status, out)
+                except Exception as e:
+                    post_events = [{"hook_id": "_error", "event": "post_tool",
+                                     "type": "log",
+                                     "message": f"hook error: {e}", "tool": name}]
+                for ev_hook in post_events:
+                    yield _sse({**ev_hook, "type": "hook", "id": tid,
+                                 "action_type": ev_hook.get("type")})
                 if imgs:
                     pending_images.extend(imgs)
                 bak = None

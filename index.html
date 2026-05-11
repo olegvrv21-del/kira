@@ -2027,6 +2027,27 @@
                 }
               }
             }
+            else if (j.type === 'hook') {
+              const card = cards.get(j.id);
+              if (card) {
+                let bar = card.querySelector('.tool-hooks');
+                if (!bar) {
+                  bar = document.createElement('div');
+                  bar.className = 'tool-hooks';
+                  bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin:4px 0;font-size:11px;';
+                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                }
+                const badge = document.createElement('span');
+                const at = j.action_type;
+                const color = at === 'deny' ? '#ff5252' :
+                              (at === 'shell' ? '#42a5f5' : '#9aa');
+                badge.style.cssText = `background:${color}22;color:${color};border:1px solid ${color}66;padding:1px 6px;border-radius:6px;`;
+                const icon = at === 'deny' ? '⛔' : (at === 'shell' ? '⚡' : 'hook');
+                badge.textContent = `${icon} ${j.hook_id || ''} ${j.message ? '· ' + j.message.slice(0, 80) : ''}`;
+                badge.title = `${j.event} → ${j.type}: ${j.message || ''}`;
+                bar.appendChild(badge);
+              }
+            }
             else if (j.type === 'tool_result') {
               const card = cards.get(j.id);
               if (card) {
