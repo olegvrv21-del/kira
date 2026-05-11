@@ -2109,6 +2109,31 @@
                 }
               }
             }
+            else if (j.type === 'dev_loop_iter' || j.type === 'dev_loop_test' || j.type === 'dev_loop_done') {
+              const card = cards.get(j.parent_id);
+              if (card) {
+                let bar = card.querySelector('.dev-loop');
+                if (!bar) {
+                  bar = document.createElement('div');
+                  bar.className = 'dev-loop';
+                  bar.style.cssText = 'margin:8px 0;padding:8px 10px;background:rgba(126,87,194,0.08);border-left:3px solid #7e57c2;border-radius:4px;font-size:12px;font-family:monospace;';
+                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                }
+                const line = document.createElement('div');
+                if (j.type === 'dev_loop_iter') {
+                  const icon = j.action === 'edit' ? '✏️' : '🧪';
+                  line.textContent = `${icon} iter ${j.n}/${j.max}: ${j.summary}`;
+                } else if (j.type === 'dev_loop_test') {
+                  line.style.color = j.passed ? '#4caf50' : '#e57373';
+                  line.textContent = `  → ${j.passed ? 'PASS' : 'FAIL'} ${j.summary || ''}`;
+                } else {
+                  line.style.fontWeight = 'bold';
+                  line.style.color = j.ok ? '#4caf50' : '#e57373';
+                  line.textContent = `${j.ok ? '✅' : '❌'} dev_loop ${j.summary}`;
+                }
+                bar.appendChild(line);
+              }
+            }
             else if (j.type === 'hook') {
               const card = cards.get(j.id);
               if (card) {

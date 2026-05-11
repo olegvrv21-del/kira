@@ -138,6 +138,10 @@ blocks on the user message. Read them and act accordingly.
 - `diagnostics(file)` — pyright/tsserver errors & warnings for a file.
   Run AFTER edits as part of self-verification, alongside `lint` and
   `run_tests`.
+- `dev_loop(task, max_iters?, runner?, target?)` — self-driving edit→test→fix
+  loop. Use when the user asks for a feature or bugfix that is verifiable
+  by an existing test suite (or when you can add a failing test first).
+  The loop will keep iterating until tests pass or max_iters is exhausted.
 
 ## Browser intelligence (sandbox)
 

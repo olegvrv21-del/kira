@@ -336,6 +336,106 @@ def _user_msg(text: str, model: str, cwd: str, tool_results: list[dict] | None =
     return {"userInputMessage": msg}
 
 
+async def _handle_dev_loop(api_key, args, model, cwd, session_id, parent_tool_id,
+                            toolkit):
+    """Implement the dev_loop tool: write code -> run tests -> fix -> repeat.
+
+    Streams SSE events:
+      dev_loop_iter   {parent_id, n, action: 'edit'|'test', summary}
+      dev_loop_done   {parent_id, ok, iters, last_test, summary}
+    Yields (sse_bytes_or_None, (status, output)_or_None).
+    """
+    task = (args or {}).get("task", "").strip()
+    if not task:
+        yield None, ("error", "task is required")
+        return
+    max_iters = int((args or {}).get("max_iters") or 5)
+    max_iters = max(1, min(max_iters, 10))
+    runner = (args or {}).get("runner")  # pytest / jest / go / None=auto
+    target = (args or {}).get("target") or None
+    test_path = (args or {}).get("path") or None
+    relevant = (args or {}).get("relevant_context") or ""
+
+    history: list[str] = []
+    last_test_output = "(no run yet)"
+    last_status = "unknown"
+
+    def _build_subagent_query(iter_n: int) -> str:
+        if iter_n == 0:
+            head = (
+                "You are inside a dev_loop. Your job: implement / fix the task "
+                "below, then verify by running tests yourself if needed.\n\n"
+                "After you finish editing, the dev_loop will automatically run "
+                "the project tests and report the result back to you. Make "
+                "focused edits; don't write long explanations.\n\n"
+                f"TASK:\n{task}\n"
+            )
+        else:
+            head = (
+                f"You are inside a dev_loop, iteration {iter_n + 1}/{max_iters}. "
+                "Previous edits did NOT make the tests pass. Read the test "
+                "output below carefully, then make MINIMAL targeted edits to "
+                "fix it. Do NOT rewrite unrelated code.\n\n"
+                f"ORIGINAL TASK:\n{task}\n\n"
+                f"TEST OUTPUT (latest):\n{last_test_output[:6000]}\n"
+            )
+        if relevant:
+            head += f"\nAdditional context provided by caller:\n{relevant}\n"
+        return head
+
+    for n in range(max_iters):
+        # ---- 1) ask subagent to edit ----
+        q = _build_subagent_query(n)
+        yield _sse({"type": "dev_loop_iter", "parent_id": parent_tool_id,
+                     "n": n + 1, "max": max_iters,
+                     "action": "edit",
+                     "summary": f"editing (iter {n+1}/{max_iters})"}), None
+        try:
+            sub_out = await _run_subagent_silent(
+                api_key, q, model, cwd, session_id,
+                relevant_context="")
+        except Exception as e:
+            yield None, ("error", f"dev_loop subagent failed: {e}")
+            return
+        history.append(f"# iter {n+1} edit summary\n{sub_out[:1200]}")
+        # ---- 2) run tests ----
+        yield _sse({"type": "dev_loop_iter", "parent_id": parent_tool_id,
+                     "n": n + 1, "max": max_iters,
+                     "action": "test",
+                     "summary": f"running tests (iter {n+1}/{max_iters})"}), None
+        test_args = {}
+        if runner: test_args["runner"] = runner
+        if target: test_args["target"] = target
+        if test_path: test_args["path"] = test_path
+        if USE_SANDBOX:
+            t_status, t_out, _ = await asyncio.to_thread(
+                toolkit.run_tool, "run_tests", test_args, cwd, session_id)
+        else:
+            t_status, t_out, _ = await asyncio.to_thread(
+                toolkit.run_tool, "run_tests", test_args, cwd)
+        last_test_output = t_out or ""
+        last_status = t_status
+        passed = (t_status == "success" and "TESTS=PASS" in (t_out or ""))
+        yield _sse({"type": "dev_loop_test", "parent_id": parent_tool_id,
+                     "n": n + 1, "status": t_status,
+                     "passed": passed,
+                     "summary": (t_out or "").splitlines()[0][:200] if t_out else ""}), None
+        if passed:
+            yield _sse({"type": "dev_loop_done", "parent_id": parent_tool_id,
+                         "ok": True, "iters": n + 1,
+                         "summary": f"PASS after {n+1} iter(s)"}), None
+            yield None, ("success",
+                f"DEV_LOOP=PASS iters={n+1}\nFinal test output:\n{(t_out or '')[:4000]}")
+            return
+    # exhausted
+    yield _sse({"type": "dev_loop_done", "parent_id": parent_tool_id,
+                 "ok": False, "iters": max_iters,
+                 "summary": f"FAIL after {max_iters} iter(s)"}), None
+    yield None, ("error",
+        f"DEV_LOOP=FAIL iters={max_iters} last_status={last_status}\n"
+        f"Last test output:\n{last_test_output[:4000]}")
+
+
 async def _handle_subagent(api_key, args, model, cwd, session_id, parent_tool_id):
     """Generator: yields (sse_bytes_or_None, (status, output)_or_None).
 
@@ -787,6 +887,27 @@ async def run_agent(
                             yield ev_b
                         if out is not None:
                             status, out_text = out
+                            yield _sse({"type": "tool_result", "id": tid,
+                                        "status": status, "output": out_text})
+                            results.append({"toolUseId": tid,
+                                            "content": [{"text": out_text}],
+                                            "status": status})
+                    continue
+                if name == "dev_loop":
+                    async for ev_b, out in _handle_dev_loop(
+                            api_key, args, model, cwd, session_id, tid, toolkit):
+                        if ev_b is not None:
+                            yield ev_b
+                        if out is not None:
+                            status, out_text = out
+                            try:
+                                import agent_store as _st
+                                _st.log_action(session_id, name, args,
+                                               ok=(status == "success"),
+                                               error=None if status == "success" else out_text[:500],
+                                               tool_use_id=tid)
+                            except Exception:
+                                pass
                             yield _sse({"type": "tool_result", "id": tid,
                                         "status": status, "output": out_text})
                             results.append({"toolUseId": tid,

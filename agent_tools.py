@@ -361,6 +361,7 @@ TOOLS = {
     "find_references": _not_supported,
     "rename_symbol": _not_supported,
     "diagnostics": _not_supported,
+    "dev_loop": _not_supported,
     "load_skill": load_skill_tool,
     "verify_change": verify_change,
 }

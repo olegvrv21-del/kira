@@ -1197,5 +1197,39 @@
         }
       }
     }
+  },
+  {
+    "toolSpecification": {
+      "name": "dev_loop",
+      "description": "Self-driving edit-test-fix loop. Implements `task` by editing files (via a subagent with full tool access), then runs the project test suite. On failure, the test output is fed back and the loop iterates up to max_iters (default 5). Returns DEV_LOOP=PASS or DEV_LOOP=FAIL with the last test output.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string"
+            },
+            "max_iters": {
+              "type": "integer"
+            },
+            "runner": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "relevant_context": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      }
+    }
   }
 ]
