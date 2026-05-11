@@ -1,8 +1,6 @@
 """FastAPI endpoint smoke tests via TestClient."""
 
-import os
 import shutil
-from pathlib import Path
 
 
 def test_healthz(app_client):

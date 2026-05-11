@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 import agent_runtime
 import agent_skills
+import agent_store
 
 # Controls whether internal error details are included in HTTP/SSE responses.
 # Off by default (avoids stack-trace exposure; CodeQL py/stack-trace-exposure).
@@ -233,23 +234,17 @@ async def skill_get(name: str):
 
 @app.get("/agent/plan/{sid}")
 async def agent_plan_get(sid: str):
-    import agent_store
-
     p = agent_store.get_meta(sid, "plan", {"items": []})
     return p if isinstance(p, dict) else {"items": []}
 
 
 @app.get("/agent/actions")
 async def agent_actions(sid: str | None = None, limit: int = 200):
-    import agent_store
-
     return {"actions": agent_store.list_actions(sid=sid, limit=limit)}
 
 
 @app.get("/agent/actions/{aid}")
 async def agent_action_get(aid: int):
-    import agent_store
-
     a = agent_store.get_action(aid)
     if not a:
         raise HTTPException(status_code=404)
@@ -259,8 +254,6 @@ async def agent_action_get(aid: int):
 @app.post("/agent/actions/{aid}/rollback")
 async def agent_action_rollback(aid: int):
     import shutil
-
-    import agent_store
 
     a = agent_store.get_action(aid)
     if not a:
@@ -533,8 +526,6 @@ async def chat(req: ChatRequest):
 
 import shutil as _shutil
 
-import agent_store
-
 agent_store.init()
 
 KIRA_SESSION_TTL_DAYS = int(os.environ.get("KIRA_SESSION_TTL_DAYS", "30"))
@@ -740,8 +731,6 @@ async def agent_session_get(sid: str):
                         entry["backup"] = act["backup"]
                 # Special-case: split subagent blocks back into structured items
                 if entry["name"] == "use_subagent" and isinstance(entry.get("output"), str):
-                    import re
-
                     blocks = re.split(
                         r"^=== Subagent #(\d+) \[(success|error)\] ===\s*\n", entry["output"], flags=re.MULTILINE
                     )

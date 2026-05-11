@@ -3,9 +3,6 @@
 We mock sb.lsp_call/sb.read_file/sb.write_file so tests run without Docker.
 """
 
-import json
-import types
-
 import pytest
 
 import sandbox_tools as st

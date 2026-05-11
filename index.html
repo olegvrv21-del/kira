@@ -1538,7 +1538,7 @@
           const ts = new Date(a.ts * 1000).toLocaleString();
           let summary = a.file || '';
           if (!summary) {
-            try { const j = JSON.parse(a.args); summary = j.command || j.path || j.pattern || (j.name||'') } catch {}
+            try { const j = JSON.parse(a.args); summary = j.command || j.path || j.pattern || (j.name||''); } catch {}
           }
           if (a.error) summary = a.error;
           const canRollback = !!a.backup && !!a.file;

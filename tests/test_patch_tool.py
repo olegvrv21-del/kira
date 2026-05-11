@@ -3,9 +3,6 @@ so we don't need docker. Host-side fs_write was tested elsewhere; here we
 focus on the clipboard/reindent/operations matrix via the function as if it
 rolled host paths."""
 
-import importlib
-from pathlib import Path
-
 # Reuse sandbox_tools._reindent purely (no docker needed).
 import sandbox_tools
 

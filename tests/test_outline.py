@@ -1,7 +1,5 @@
 """Outline regex parsing (host-side, no docker)."""
 
-import re
-
 import sandbox_tools as st
 
 

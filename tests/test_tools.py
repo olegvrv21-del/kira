@@ -1,7 +1,5 @@
 """agent_tools: fs_write backup, verify_change, dispatcher."""
 
-import os
-import tempfile
 from pathlib import Path
 
 import agent_tools

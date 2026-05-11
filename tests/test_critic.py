@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 import agent_critic

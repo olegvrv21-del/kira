@@ -194,7 +194,7 @@ def _backup_if_exists(sid: str, path: str) -> str | None:
 def fs_write(args: dict[str, Any], cwd: str, sid: str) -> str:
     cmd = args["command"]
     path = _cpath(args["path"], sid)
-    bak = _backup_if_exists(sid, path) if True else None
+    bak = _backup_if_exists(sid, path)
     suffix = f" [BACKUP={bak}]" if bak else ""
     if cmd == "create":
         sb.write_file(sid, path, args["file_text"])
@@ -964,8 +964,6 @@ def lint(args: dict[str, Any], cwd: str, sid: str) -> str:
 # ---------- verify_change (runs INSIDE sandbox) ----------
 
 # ---------- LSP-backed code intel ----------
-
-_LSP_EXTS = (".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 
 def _lsp_resolve_pos(args: dict[str, Any], sid: str) -> tuple[str, int, int]:

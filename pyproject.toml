@@ -22,4 +22,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["F401", "F811", "F841", "B018"]
+# Tests may redefine fixture names (F811) and have side-effect-only exprs (B018);
+# unused locals (F841) are OK because we sometimes bind a result for clarity.
+"tests/*" = ["F811", "B018", "F841"]
