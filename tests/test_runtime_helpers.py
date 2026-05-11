@@ -70,7 +70,7 @@ def test_request_cancel_signals_registered_event():
         finally:
             ar._unregister_cancel("unit-test-sid-1")
 
-    asyncio.get_event_loop().run_until_complete(go()) if False else asyncio.run(go())
+    asyncio.run(go())
 
 
 def test_unregister_cancel_idempotent():

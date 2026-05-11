@@ -160,7 +160,6 @@ async def test_run_subagent_silent_with_tool_call(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_subagent_invoke_two_in_parallel(monkeypatch):
     """Two subagents fanned out, both return text only."""
-    delay_order = {"first": True}
 
     async def fake(api_key, body, **kw):
         # Different responses depending on query.

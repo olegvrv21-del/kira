@@ -40,7 +40,8 @@ async def _collect(gen) -> list[dict]:
             try:
                 out.append(json.loads(ev[6:].decode("utf-8").strip()))
             except json.JSONDecodeError:
-                pass
+                # malformed SSE chunk; tolerate and skip
+                continue
     return out
 
 
@@ -148,6 +149,7 @@ async def test_run_agent_cancellation(monkeypatch, tmp_path):
     types = [e.get("type") for e in events]
     assert "cancelled" in types
     assert types[-1] == "done"
+    assert cancel_task.done()  # cancellation trigger was awaited
 
 
 # ---------- error propagation ----------
@@ -314,13 +316,8 @@ async def test_run_agent_hook_deny_blocks_tool(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ar.toolkit, "run_tool", fake_run_tool)
 
-    # Stub agent_hooks.check_tool to return deny verdict.
+    # Stub agent_hooks.run_pre_tool to return a deny verdict.
     import agent_hooks
-
-    def fake_check(event, ctx):
-        if event == "pre_tool":
-            return {"action": "deny", "message": "blocked by test policy", "hook_id": "unit_test_block"}
-        return None
 
     def fake_pre(sid, tool, args):
         return [
