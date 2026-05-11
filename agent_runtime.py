@@ -25,6 +25,7 @@ import httpx
 import q_client
 import agent_skills
 import agent_hooks
+from agent_keys import key_pool
 
 # Optional cost-limit hook installed by app.py. Signature:
 #   (session_id: str, current_turn_credits: float) -> str | None
@@ -118,7 +119,7 @@ async def _llm_one_shot(api_key: str, prompt: str, model: str,
     }}
     chunks: list[str] = []
     try:
-        async for et, payload in q_client.stream_q(api_key, body, timeout=120):
+        async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, timeout=120):
             if et == "_throttle":
                 continue
             if et == "assistantResponseEvent" and isinstance(payload, dict):
@@ -441,7 +442,7 @@ async def _run_subagent_silent(
         tool_order: list[str] = []
         message_id = None
         try:
-            async for et, payload in q_client.stream_q(api_key, body):
+            async for et, payload in q_client.stream_q(key_pool.current() or api_key, body):
                 if et == "_throttle":
                     continue
                 if not isinstance(payload, dict):
@@ -601,7 +602,7 @@ async def run_agent(
 
             cancelled_mid_stream = False
             try:
-                async for et, payload in q_client.stream_q(api_key, body, cancel_event=cancel_ev):
+                async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, cancel_event=cancel_ev):
                     if et == "_cancelled":
                         cancelled_mid_stream = True
                         break

@@ -15,6 +15,7 @@ import agent_skills
 OMNI_URL = os.environ.get("OMNI_URL", "http://localhost:8128/v1")
 OMNI_KEY = os.environ.get("OPENAI_API_KEY", "")
 KIRO_API_KEY = os.environ.get("KIRO_API_KEY", "")
+from agent_keys import key_pool  # noqa: E402
 KIRO_Q_URL = "https://q.us-east-1.amazonaws.com/"
 DEFAULT_MODEL = "q/claude-opus-4.7" if KIRO_API_KEY else "kr/claude-sonnet-4.5"
 SYSTEM_PROMPT = (
@@ -124,6 +125,17 @@ async def skills_list():
 async def hooks_endpoint():
     import agent_hooks
     return {"status": agent_hooks.hooks_status(), "hooks": agent_hooks.list_hooks()}
+
+
+@app.get("/agent/keys")
+async def keys_endpoint():
+    return key_pool.status()
+
+
+@app.post("/agent/keys/reload")
+async def keys_reload():
+    key_pool.reload()
+    return {"ok": True, **key_pool.status()}
 
 
 @app.get("/agent/metrics")
@@ -352,7 +364,7 @@ async def stream_q(model_id: str, msgs: list):
         }
     }
     headers = {
-        "Authorization": f"Bearer {KIRO_API_KEY}",
+        "Authorization": f"Bearer {key_pool.current() or KIRO_API_KEY}",
         "Content-Type": "application/x-amz-json-1.0",
         "X-Amz-Target": "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
         "tokentype": "API_KEY",
@@ -516,7 +528,7 @@ async def agent_endpoint(req: AgentRequest):
                     continue
                 agent_images.append({"format": fmt,
                                      "source": {"bytes": b64}})
-        async for ev in agent_runtime.run_agent(KIRO_API_KEY, req.prompt, model,
+        async for ev in agent_runtime.run_agent(key_pool.current() or KIRO_API_KEY, req.prompt, model,
                                                 session_id=sid, history=hist,
                                                 images=agent_images):
             try:
@@ -730,7 +742,7 @@ async def usage():
     if not KIRO_API_KEY:
         return JSONResponse({"error": "KIRO_API_KEY not set"}, status_code=400)
     headers = {
-        "Authorization": f"Bearer {KIRO_API_KEY}",
+        "Authorization": f"Bearer {key_pool.current() or KIRO_API_KEY}",
         "Content-Type": "application/x-amz-json-1.0",
         "tokentype": "API_KEY",
         "X-Amz-Target": "AmazonCodeWhispererService.GetUsageLimits",

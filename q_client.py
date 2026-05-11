@@ -23,6 +23,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from agent_keys import key_pool
+
 Q_URL = "https://q.us-east-1.amazonaws.com/?origin=KIRO_CLI"
 
 _CONCURRENCY = int(os.environ.get("KIRA_Q_CONCURRENCY", "3"))
@@ -113,6 +115,25 @@ async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
                 try:
                     async with cx.stream("POST", Q_URL,
                                          headers=_q_headers(api_key), json=body) as r:
+                        # 401/403: try to rotate to a fallback key.
+                        if r.status_code in (401, 403):
+                            err_body = (await r.aread()).decode("utf-8", "replace")
+                            new_key = key_pool.mark_bad(
+                                api_key, reason=f"{r.status_code}: {err_body[:120]}")
+                            if new_key and new_key != api_key:
+                                yield ("_throttle", {
+                                    "reason": f"key_rotated:{r.status_code}",
+                                    "attempt": attempt + 1,
+                                    "sleep": 0,
+                                })
+                                api_key = new_key
+                                attempt += 1
+                                if attempt > _MAX_RETRIES:
+                                    raise RuntimeError(
+                                        f"q {r.status_code} after key rotation: {err_body[:300]}")
+                                continue
+                            # No fallback or same key returned — surface error.
+                            raise RuntimeError(f"q {r.status_code}: {err_body[:400]}")
                         # Decide if this status is retriable.
                         retriable = r.status_code in (429, 500, 502, 503, 504)
                         err: str | None = None
