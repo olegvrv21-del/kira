@@ -809,6 +809,15 @@ async def run_agent(
                 if deny_msg is not None:
                     out = f"HOOK_DENY: {deny_msg}"
                     status, imgs = "error", None
+                    try:
+                        import agent_store as _st
+                        _st.log_action(session_id, "_hook_deny",
+                                       {"tool": name, "message": deny_msg,
+                                        "args": args},
+                                       ok=False, error=deny_msg[:500],
+                                       tool_use_id=tid)
+                    except Exception:
+                        pass
                 elif USE_SANDBOX:
                     status, out, imgs = await asyncio.to_thread(
                         toolkit.run_tool, name, args, cwd, session_id)

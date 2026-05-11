@@ -126,6 +126,16 @@ async def hooks_endpoint():
     return {"status": agent_hooks.hooks_status(), "hooks": agent_hooks.list_hooks()}
 
 
+@app.get("/agent/metrics")
+async def metrics_endpoint(window: float | None = None):
+    return agent_store.compute_metrics(sid=None, window_seconds=window)
+
+
+@app.get("/agent/metrics/{sid}")
+async def metrics_sid(sid: str, window: float | None = None):
+    return agent_store.compute_metrics(sid=sid, window_seconds=window)
+
+
 @app.get("/skills/{name}")
 async def skill_get(name: str):
     body = agent_skills.load_skill(name)
@@ -172,6 +182,12 @@ async def agent_action_rollback(aid: int):
         ts = int(__import__('time').time())
         shutil.copy2(f, f + f".pre_rollback.{ts}")
     shutil.copy2(bak, f)
+    try:
+        agent_store.log_action(a.get("sid") or "", "_rollback",
+                               {"action_id": aid, "file": f, "from": bak},
+                               ok=True)
+    except Exception:
+        pass
     return {"ok": True, "restored": f, "from": bak}
 
 

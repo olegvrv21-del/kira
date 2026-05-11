@@ -25,6 +25,7 @@ check plan_empty    /agent/plan/zzz      '"items":\[\]'
 check actions_list  /agent/actions       '"actions"'
 check limits        /agent/limits        'session_limit'
 check hooks         /agent/hooks         '"hooks"'
+check metrics       /agent/metrics       '"by_tool"'
 # Tool count check: agent_tool_specs.json should ship via static or be on disk.
 if command -v jq >/dev/null 2>&1 && [ -f agent_tool_specs.json ]; then
   n=$(jq length agent_tool_specs.json)

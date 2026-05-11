@@ -301,6 +301,86 @@ def list_actions(sid: str | None = None, limit: int = 200,
     return out
 
 
+def compute_metrics(sid: str | None = None, window_seconds: float | None = None
+                    ) -> dict:
+    """Aggregate stats over the `actions` table.
+
+    If sid is None: global metrics. Else: per-session.
+    If window_seconds is set: only consider rows newer than now-window.
+    """
+    where = []
+    params: list = []
+    if sid:
+        where.append("sid=?"); params.append(sid)
+    if window_seconds:
+        where.append("ts>?"); params.append(time.time() - float(window_seconds))
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    with _conn() as c:
+        total = c.execute(f"SELECT COUNT(*) FROM actions{wsql}", params).fetchone()[0] or 0
+        ok = c.execute(f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} ok=1",
+                       params).fetchone()[0] or 0
+        fail = total - ok
+        by_tool_rows = c.execute(
+            f"SELECT tool, COUNT(*) as n, SUM(ok) as okn FROM actions{wsql} GROUP BY tool ORDER BY n DESC",
+            params,
+        ).fetchall()
+        sessions = c.execute(
+            f"SELECT COUNT(DISTINCT sid) FROM actions{wsql}", params
+        ).fetchone()[0] or 0
+        # fs_write -> verify_change ratio: for each fs_write/patch event, look
+        # whether a verify_change action followed it within 10 subsequent
+        # actions of the same session.
+        wsql_writes = wsql + (" AND" if wsql else " WHERE") + " tool IN ('fs_write','patch')"
+        writes = c.execute(
+            f"SELECT id, sid, ts FROM actions{wsql_writes}", params
+        ).fetchall()
+        verified_writes = 0
+        for wid, wsid, wts in writes:
+            r = c.execute(
+                "SELECT 1 FROM actions WHERE sid=? AND ts>? AND tool='verify_change' ORDER BY ts LIMIT 1",
+                (wsid, wts),
+            ).fetchone()
+            if r:
+                verified_writes += 1
+        # Rollback approximation: actions where args contain '"rollback"' OR
+        # post-write rollback is tracked separately by /agent/actions/{id}/rollback;
+        # we don't have a flag, so we count actions tagged tool='_rollback'.
+        rollbacks = c.execute(
+            f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_rollback'",
+            params,
+        ).fetchone()[0] or 0
+        # Hook denies: tool='_hook_deny'.
+        hook_denies = c.execute(
+            f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_hook_deny'",
+            params,
+        ).fetchone()[0] or 0
+        # Top error tools
+        top_errors = c.execute(
+            f"SELECT tool, COUNT(*) as n FROM actions{wsql}{' AND' if wsql else ' WHERE'} ok=0 GROUP BY tool ORDER BY n DESC LIMIT 5",
+            params,
+        ).fetchall()
+    return {
+        "sid": sid,
+        "window_seconds": window_seconds,
+        "total": total,
+        "ok": ok,
+        "fail": fail,
+        "success_rate": (ok / total) if total else None,
+        "sessions": sessions,
+        "by_tool": [
+            {"tool": t, "count": n, "ok": (okn or 0),
+             "success_rate": (okn or 0) / n if n else None}
+            for (t, n, okn) in by_tool_rows
+        ],
+        "writes": len(writes),
+        "writes_verified": verified_writes,
+        "verify_ratio": (verified_writes / len(writes)) if writes else None,
+        "rollbacks": rollbacks,
+        "hook_denies": hook_denies,
+        "top_errors": [{"tool": t, "count": n} for (t, n) in top_errors],
+    }
+
+
 def get_action(aid: int) -> dict | None:
     with _conn() as c:
         r = c.execute(

@@ -407,6 +407,17 @@
   #dashboard { display: none; flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
   #models-view { display: none; flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
   #actions-view { display: none; flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
+  #metrics-view { display: none; flex: 1; padding: 24px 28px 32px; overflow-y: auto; }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+  .metric-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px 16px; }
+  .metric-card .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .metric-card .val { font-size: 24px; font-weight: 600; margin-top: 4px; }
+  .metric-card .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .metric-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .metric-table th, .metric-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .metric-table th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .metric-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .metric-bar > div { height: 100%; background: #4caf50; }
   .act-row { display: grid; grid-template-columns: 130px 110px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; margin-bottom: 8px; background: rgba(255,255,255,0.02); font-size: 13px; }
   .act-row.fail { border-left: 3px solid #ef4444; }
   .act-row.ok   { border-left: 3px solid #10b981; }
@@ -680,6 +691,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
             <span data-i18n="nav_actions">Действия</span>
           </button>
+          <button type="button" class="nav-item" data-nav="metrics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <span data-i18n="nav_metrics">Метрики</span>
+          </button>
         </nav>
 
         <div class="drawer-section">
@@ -778,6 +793,21 @@
       <section id="models-view" style="display:none">
         <h2 data-i18n="models_title">Модели</h2>
         <div class="models-grid" id="models-grid"></div>
+      </section>
+      <section id="metrics-view" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px">
+          <h2 style="margin:0" data-i18n="metrics_title">Метрики Киры</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="metrics-window" class="sq-btn" style="padding:6px 10px">
+              <option value="">всё время</option>
+              <option value="3600">час</option>
+              <option value="86400" selected>сутки</option>
+              <option value="604800">неделя</option>
+            </select>
+            <button id="metrics-refresh" class="sq-btn" data-i18n="dash_refresh" style="padding:6px 12px">Обновить</button>
+          </div>
+        </div>
+        <div id="metrics-body"></div>
       </section>
       <section id="actions-view" style="display:none">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px">
@@ -1370,16 +1400,20 @@
       const isAgent = name === 'agents';
       const isModels = name === 'models';
       const isActions = name === 'actions';
+      const isMetrics = name === 'metrics';
       dashboardEl.style.display = isDash ? 'block' : 'none';
       const modelsView = document.getElementById('models-view');
       if (modelsView) modelsView.style.display = isModels ? 'block' : 'none';
       const actionsView = document.getElementById('actions-view');
       if (actionsView) actionsView.style.display = isActions ? 'block' : 'none';
-      const hideMain = isDash || isModels || isActions;
+      const metricsView = document.getElementById('metrics-view');
+      if (metricsView) metricsView.style.display = isMetrics ? 'block' : 'none';
+      const hideMain = isDash || isModels || isActions || isMetrics;
       messagesEl.style.display = hideMain ? 'none' : '';
       composerWrap.style.display = hideMain ? 'none' : '';
       if (isModels) renderModelsView();
       if (isActions) loadActions();
+      if (isMetrics) loadMetrics();
       const wasAgent = agentMode;
       agentMode = isAgent;
       document.body.classList.toggle('agent-mode', isAgent);
@@ -1430,6 +1464,54 @@
       planCounter.textContent = `${done}/${items.length}`;
     }
     function clearPlan() { renderPlan({items:[]}); }
+
+    function pct(x) { return x == null ? '—' : (x * 100).toFixed(1) + '%'; }
+
+    async function loadMetrics() {
+      const body = document.getElementById('metrics-body');
+      body.innerHTML = '<div style="color:var(--muted)">…</div>';
+      const w = document.getElementById('metrics-window').value;
+      const url = '/agent/metrics' + (w ? `?window=${w}` : '');
+      try {
+        const r = await fetch(url);
+        const d = await r.json();
+        const cards = [
+          { lbl: 'Total actions', val: d.total, sub: `${d.ok} ok / ${d.fail} fail` },
+          { lbl: 'Success rate', val: pct(d.success_rate), sub: '' },
+          { lbl: 'Sessions', val: d.sessions, sub: '' },
+          { lbl: 'fs_write → verify', val: pct(d.verify_ratio),
+            sub: `${d.writes_verified} / ${d.writes} writes` },
+          { lbl: 'Rollbacks', val: d.rollbacks, sub: '' },
+          { lbl: 'Hook denies', val: d.hook_denies, sub: '' },
+        ];
+        let html = '<div class="metric-grid">' + cards.map(c =>
+          `<div class="metric-card"><div class="lbl">${c.lbl}</div>` +
+          `<div class="val">${c.val ?? '—'}</div>` +
+          `<div class="sub">${c.sub}</div></div>`).join('') + '</div>';
+        // by tool table
+        html += '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">По инструментам</h3>';
+        html += '<table class="metric-table"><thead><tr><th>Tool</th><th>Calls</th><th>OK</th><th>Success</th><th></th></tr></thead><tbody>';
+        for (const t of (d.by_tool || [])) {
+          const sr = t.success_rate;
+          const w = sr != null ? Math.round(sr * 100) : 0;
+          html += `<tr><td><code>${t.tool}</code></td><td>${t.count}</td><td>${t.ok}</td><td>${pct(sr)}</td><td style="width:120px"><div class="metric-bar"><div style="width:${w}%"></div></div></td></tr>`;
+        }
+        html += '</tbody></table>';
+        if (d.top_errors && d.top_errors.length) {
+          html += '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Топ ошибок</h3>';
+          html += '<table class="metric-table"><thead><tr><th>Tool</th><th>Errors</th></tr></thead><tbody>';
+          for (const e of d.top_errors) {
+            html += `<tr><td><code>${e.tool}</code></td><td>${e.count}</td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
+        body.innerHTML = html;
+      } catch (e) {
+        body.innerHTML = `<div style="color:#e57373">${e.message || e}</div>`;
+      }
+    }
+    document.getElementById('metrics-refresh')?.addEventListener('click', loadMetrics);
+    document.getElementById('metrics-window')?.addEventListener('change', loadMetrics);
 
     async function loadActions() {
       const list = document.getElementById('actions-list');
