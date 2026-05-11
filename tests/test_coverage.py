@@ -109,3 +109,51 @@ def test_endpoint_run_blocked():
     r = c.post("/agent/coverage/run")
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+# ---------- coverage_status tool ----------
+
+import agent_tools
+
+
+def test_line_ranges_basic():
+    assert agent_tools._line_ranges([]) == "(none)"
+    assert agent_tools._line_ranges([5]) == "5"
+    assert agent_tools._line_ranges([1, 2, 3]) == "1-3"
+    assert agent_tools._line_ranges([1, 2, 3, 7, 9, 10, 11]) == "1-3,7,9-11"
+    assert agent_tools._line_ranges([4, 7, 9]) == "4,7,9"
+
+
+def test_coverage_status_tool_global(tmp_cov):
+    out = agent_tools.coverage_status({}, cwd=".")
+    assert "COVERAGE total=65.0%" in out
+    assert "app.py" in out
+    assert "agent_runtime.py" in out
+    # ordered worst first
+    p_app = out.find("app.py")
+    p_run = out.find("agent_runtime.py")
+    assert p_app < p_run
+
+
+def test_coverage_status_tool_file_detail(tmp_cov):
+    out = agent_tools.coverage_status({"path": "app.py"}, cwd=".")
+    assert "COVERAGE app.py: 60.0%" in out
+    assert "missing lines (20):" in out
+    assert "10-12" in out
+
+
+def test_coverage_status_tool_missing_file(tmp_cov):
+    out = agent_tools.coverage_status({"path": "no_such.py"}, cwd=".")
+    assert out.startswith("COVERAGE ERROR")
+
+
+def test_coverage_status_tool_no_report(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_coverage, "COVERAGE_JSON", tmp_path / "none.json")
+    out = agent_tools.coverage_status({}, cwd=".")
+    assert "COVERAGE ERROR" in out
+    assert "make coverage" in out
+
+
+def test_coverage_status_tool_limit(tmp_cov):
+    out = agent_tools.coverage_status({"limit": 1}, cwd=".")
+    assert "1 more" in out

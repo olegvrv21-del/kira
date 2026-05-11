@@ -1335,6 +1335,36 @@ def memory_add(args: dict[str, Any], cwd: str, sid: str) -> str:
     return f"MEMORY appended file={info['file']} bytes={info['bytes']} lines={info['lines']}"
 
 
+def coverage_status(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Read coverage.json from the host repo (we always mount it at /host/webchat)."""
+    import agent_coverage
+    from agent_tools import _line_ranges  # reuse host helper
+
+    path = (args.get("path") or "").strip()
+    if path:
+        d = agent_coverage.file_detail(path)
+        if not d.get("ok"):
+            return f"COVERAGE ERROR: {d.get('error')}"
+        s = d["summary"]
+        return (
+            f"COVERAGE {path}: {s['percent']}% ({s['covered']}/{s['statements']} stmts)\n"
+            f"missing lines ({s['missing']}): {_line_ranges(d['missing_lines'])}"
+        )
+    limit = int(args.get("limit") or 20)
+    st = agent_coverage.status()
+    if not st.get("ok"):
+        return f"COVERAGE ERROR: {st.get('error')}. Run `make coverage` first."
+    lines = [
+        f"COVERAGE total={st['total_percent']}% ({st['total_covered']}/{st['total_statements']} stmts, age={st['age_seconds']}s)",
+        "files (lowest coverage first):",
+    ]
+    for f in st["files"][:limit]:
+        lines.append(f"  {f['percent']:>5.1f}%  {f['missing']:>4} missing  {f['path']}")
+    if len(st["files"]) > limit:
+        lines.append(f"... ({len(st['files']) - limit} more)")
+    return "\n".join(lines)
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str, sid: str) -> str:
     import agent_skills
 
@@ -1381,6 +1411,7 @@ TOOLS = {
     "memory_search": memory_search,
     "memory_add": memory_add,
     "review_changes": review_changes,
+    "coverage_status": coverage_status,
 }
 
 

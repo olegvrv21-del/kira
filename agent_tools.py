@@ -404,6 +404,53 @@ def memory_add(args: dict[str, Any], cwd: str) -> str:
     return f"MEMORY appended file={info['file']} bytes={info['bytes']} lines={info['lines']}"
 
 
+def coverage_status(args: dict[str, Any], cwd: str) -> str:
+    import agent_coverage
+
+    path = (args.get("path") or "").strip()
+    if path:
+        d = agent_coverage.file_detail(path)
+        if not d.get("ok"):
+            return f"COVERAGE ERROR: {d.get('error')}"
+        s = d["summary"]
+        missing = d["missing_lines"]
+        ranges = _line_ranges(missing)
+        return (
+            f"COVERAGE {path}: {s['percent']}% ({s['covered']}/{s['statements']} stmts)\n"
+            f"missing lines ({s['missing']}): {ranges}"
+        )
+    limit = int(args.get("limit") or 20)
+    st = agent_coverage.status()
+    if not st.get("ok"):
+        return f"COVERAGE ERROR: {st.get('error')}. Run `make coverage` first."
+    lines = [
+        f"COVERAGE total={st['total_percent']}% ({st['total_covered']}/{st['total_statements']} stmts, age={st['age_seconds']}s)",
+        "files (lowest coverage first):",
+    ]
+    for f in st["files"][:limit]:
+        lines.append(f"  {f['percent']:>5.1f}%  {f['missing']:>4} missing  {f['path']}")
+    if len(st["files"]) > limit:
+        lines.append(f"... ({len(st['files']) - limit} more)")
+    return "\n".join(lines)
+
+
+def _line_ranges(lines: list[int]) -> str:
+    """Compress a sorted list of line numbers into '1-3,7,9-12' notation."""
+    if not lines:
+        return "(none)"
+    out = []
+    s = lines[0]
+    p = s
+    for n in lines[1:]:
+        if n == p + 1:
+            p = n
+            continue
+        out.append(f"{s}" if s == p else f"{s}-{p}")
+        s = p = n
+    out.append(f"{s}" if s == p else f"{s}-{p}")
+    return ",".join(out)
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     import agent_skills
 
@@ -449,6 +496,7 @@ TOOLS = {
     "memory_search": memory_search,
     "memory_add": memory_add,
     "review_changes": review_changes,
+    "coverage_status": coverage_status,
 }
 
 

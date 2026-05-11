@@ -1301,5 +1301,25 @@
         }
       }
     }
+  },
+  {
+    "toolSpecification": {
+      "name": "coverage_status",
+      "description": "Read the latest pytest coverage report (coverage.json at repo root) and return overall % plus a list of files sorted by lowest coverage first. Use this when planning what tests to write or which file to refactor with caution. Returns ok=false with hint if no report exists yet \u2014 in that case run `make coverage` or `pytest --cov=. --cov-report=json:coverage.json` first. Optional `path` returns line-level detail (missing/excluded lines) for a single file. Optional `limit` truncates the file list (default 20).",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          },
+          "required": []
+        }
+      }
+    }
   }
 ]
