@@ -655,6 +655,29 @@
       <div class="modal-body" id="skills-body"></div>
     </div>
   </div>
+  <div class="modal-backdrop" id="settings-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 data-i18n="settings">Настройки</h2>
+        <button type="button" id="settings-close">×</button>
+      </div>
+      <div class="modal-body" style="padding:16px 20px">
+        <div style="margin-bottom:18px">
+          <label style="display:block;font-size:13px;opacity:.75;margin-bottom:6px" data-i18n="settings_auth_label">Auth-токен</label>
+          <input type="text" id="settings-token-input" autocomplete="off" spellcheck="false" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:inherit;font-size:13px;font-family:ui-monospace,monospace;outline:none" placeholder="ktk_..." />
+          <p id="settings-token-status" style="font-size:12px;opacity:.6;margin:6px 0 0"></p>
+        </div>
+        <div style="margin-bottom:18px">
+          <label style="display:block;font-size:13px;opacity:.75;margin-bottom:6px" data-i18n="settings_user_label">Имя пользователя</label>
+          <input type="text" id="settings-name-input" autocomplete="off" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:inherit;font-size:13px;outline:none" />
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:24px">
+          <button type="button" id="settings-clear" class="sq-btn" style="padding:8px 16px" data-i18n="settings_clear_token">Очистить токен</button>
+          <button type="button" id="settings-save" class="sq-btn primary" style="padding:8px 16px;background:var(--accent, #4a8fea);color:#fff" data-i18n="settings_save">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="drawer-inner">
       <div class="drawer-body">

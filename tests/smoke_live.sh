@@ -25,6 +25,7 @@ check skills        /skills              'skills'
 check root_html     /                    'id="plan-panel"'
 check root_actions  /                    'data-nav="actions"'
 check root_models   /                    'id="models-view"'
+check root_settings /                    'id="settings-modal"'
 # JS moved to /static/app.js after frontend split.
 check root_setmodel /static/app.js        'applyModel('
 check root_iframe   /static/app.js        "type === 'iframe'"

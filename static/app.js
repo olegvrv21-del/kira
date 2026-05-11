@@ -1478,10 +1478,67 @@ installFetchInterceptor();
       else exportChatToMd();
     });
 
-    /* profile + settings (placeholders) */
-    document.getElementById('settings-btn').addEventListener('click', () => {
-      alert(t('settings') + t('section_dev'));
+    /* settings modal */
+    const settingsModal = document.getElementById('settings-modal');
+    const settingsTokenInput = document.getElementById('settings-token-input');
+    const settingsNameInput = document.getElementById('settings-name-input');
+    const settingsTokenStatus = document.getElementById('settings-token-status');
+    function refreshSettingsStatus() {
+      const tok = (window.kiraAuth && window.kiraAuth.get()) || '';
+      settingsTokenStatus.textContent = tok
+        ? t('settings_token_set') + ' — ' + tok.slice(0, 8) + '…' + tok.slice(-4)
+        : t('settings_token_empty');
+    }
+    function openSettings(opts = {}) {
+      settingsTokenInput.value = (window.kiraAuth && window.kiraAuth.get()) || '';
+      settingsNameInput.value = localStorage.getItem('kira_user_name') || '';
+      refreshSettingsStatus();
+      if (opts.required) {
+        settingsTokenStatus.textContent = t('settings_token_required');
+        settingsTokenStatus.style.color = '#e07b5b';
+      } else {
+        settingsTokenStatus.style.color = '';
+      }
+      settingsModal.classList.add('show');
+      setTimeout(() => settingsTokenInput.focus(), 50);
+    }
+    function closeSettings() {
+      settingsModal.classList.remove('show');
+      // If 401-waiter is pending and user closed without saving, resolve with empty
+      if (window.kiraAuth && window.kiraAuth.resolveAuthWait) {
+        window.kiraAuth.resolveAuthWait('');
+      }
+    }
+    document.getElementById('settings-btn').addEventListener('click', () => openSettings());
+    document.getElementById('settings-close').addEventListener('click', closeSettings);
+    settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) closeSettings();
     });
+    document.getElementById('settings-save').addEventListener('click', () => {
+      const tok = settingsTokenInput.value.trim();
+      const name = settingsNameInput.value.trim();
+      if (window.kiraAuth) window.kiraAuth.set(tok);
+      if (name) {
+        localStorage.setItem('kira_user_name', name);
+        const pn = document.getElementById('profile-name');
+        const av = document.getElementById('avatar');
+        if (pn) pn.textContent = name;
+        if (av) av.textContent = name.charAt(0).toUpperCase();
+      }
+      refreshSettingsStatus();
+      // Wake any 401-waiter so the failed request can retry.
+      if (window.kiraAuth && window.kiraAuth.resolveAuthWait) {
+        window.kiraAuth.resolveAuthWait(tok);
+      }
+      settingsModal.classList.remove('show');
+    });
+    document.getElementById('settings-clear').addEventListener('click', () => {
+      if (window.kiraAuth) window.kiraAuth.clear();
+      settingsTokenInput.value = '';
+      refreshSettingsStatus();
+    });
+    // Auto-open settings when auth.js signals a 401.
+    window.addEventListener('kira:auth-required', () => openSettings({ required: true }));
     document.getElementById('profile-btn').addEventListener('click', () => {
       const cur = localStorage.getItem('kira_user_name') || 'Олег';
       const name = prompt('Имя:', cur);

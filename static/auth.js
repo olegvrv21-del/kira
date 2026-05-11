@@ -39,23 +39,30 @@ function withAuthHeader(input, init, token) {
   return opts;
 }
 
-// Lock so we only show one prompt at a time even with concurrent 401s.
-let _authPromptInFlight = null;
-function askForTokenOnce() {
-  if (_authPromptInFlight) return _authPromptInFlight;
-  _authPromptInFlight = new Promise((resolve) => {
-    // Defer to next tick so the current fetch unwinds cleanly.
-    setTimeout(() => {
-      const v = window.prompt(
-        'Kira: требуется auth-токен. Введи токен (пусто чтобы отменить):',
-        getToken()
-      );
-      if (v && v.trim()) setToken(v.trim());
-      _authPromptInFlight = null;
-      resolve(v && v.trim() ? v.trim() : '');
-    }, 0);
+// Lock so we only fire one auth-required event at a time even with concurrent 401s.
+let _authWaiter = null;
+let _authResolve = null;
+
+/** Returns a promise that resolves with the new token once the user provides one
+ *  via the settings UI (which calls window.kiraAuth.resolveAuthWait(token)).
+ *  Resolves with '' if the user cancels. */
+function waitForToken() {
+  if (_authWaiter) return _authWaiter;
+  _authWaiter = new Promise((resolve) => {
+    _authResolve = resolve;
+    // Dispatch event so the UI can react (open settings modal).
+    window.dispatchEvent(new CustomEvent('kira:auth-required'));
   });
-  return _authPromptInFlight;
+  return _authWaiter;
+}
+
+function resolveAuthWait(token) {
+  if (_authResolve) {
+    const r = _authResolve;
+    _authResolve = null;
+    _authWaiter = null;
+    r(token || '');
+  }
 }
 
 export function installFetchInterceptor() {
@@ -65,13 +72,19 @@ export function installFetchInterceptor() {
     let tok = getToken();
     let r = await origFetch(input, tok ? withAuthHeader(input, init, tok) : init);
     if (r.status === 401) {
-      console.warn('[kira] 401 — prompting for token');
-      const newTok = await askForTokenOnce();
+      console.warn('[kira] 401 — waiting for token via settings UI');
+      const newTok = await waitForToken();
       if (!newTok) return r;
       r = await origFetch(input, withAuthHeader(input, init, newTok));
     }
     return r;
   };
   // Re-export to window for backward compat / console use.
-  window.kiraAuth = { get: getToken, set: setToken, clear: clearToken, prompt: promptToken };
+  window.kiraAuth = {
+    get: getToken,
+    set: setToken,
+    clear: clearToken,
+    prompt: promptToken,
+    resolveAuthWait,
+  };
 }
