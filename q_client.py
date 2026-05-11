@@ -13,13 +13,14 @@ The context manager:
   - Once the stream is open (200 OK), errors mid-stream are NOT retried (would
     duplicate billing); they propagate as exceptions.
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import random
 import struct
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -29,7 +30,7 @@ Q_URL = "https://q.us-east-1.amazonaws.com/?origin=KIRO_CLI"
 
 _CONCURRENCY = int(os.environ.get("KIRA_Q_CONCURRENCY", "3"))
 _MAX_RETRIES = int(os.environ.get("KIRA_Q_MAX_RETRIES", "6"))
-_BASE_DELAY = float(os.environ.get("KIRA_Q_BASE_DELAY", "1.5"))   # seconds
+_BASE_DELAY = float(os.environ.get("KIRA_Q_BASE_DELAY", "1.5"))  # seconds
 _MAX_DELAY = float(os.environ.get("KIRA_Q_MAX_DELAY", "30"))
 
 _SEMAPHORES: dict[str, asyncio.Semaphore] = {}
@@ -61,6 +62,7 @@ def _q_headers(api_key: str) -> dict[str, str]:
 def parse_frames(buf: bytearray):
     """AWS event-stream frame parser. Drains complete frames from buf in place."""
     import json
+
     while len(buf) >= 12:
         total_len = struct.unpack(">I", bytes(buf[0:4]))[0]
         if total_len <= 0 or total_len > 16 * 1024 * 1024:
@@ -73,16 +75,20 @@ def parse_frames(buf: bytearray):
         headers_len = struct.unpack(">I", frame[4:8])[0]
         prelude_end = 12
         headers_end = prelude_end + headers_len
-        payload = frame[headers_end:total_len - 4]
+        payload = frame[headers_end : total_len - 4]
         # walk headers for :event-type
         et = None
         i = prelude_end
         while i < headers_end:
-            name_len = frame[i]; i += 1
-            name = frame[i:i + name_len].decode("utf-8", "replace"); i += name_len
+            name_len = frame[i]
+            i += 1
+            name = frame[i : i + name_len].decode("utf-8", "replace")
+            i += name_len
             i += 1  # value type byte (string=7)
-            vlen = struct.unpack(">H", frame[i:i + 2])[0]; i += 2
-            val = frame[i:i + vlen].decode("utf-8", "replace"); i += vlen
+            vlen = struct.unpack(">H", frame[i : i + 2])[0]
+            i += 2
+            val = frame[i : i + vlen].decode("utf-8", "replace")
+            i += vlen
             if name == ":event-type":
                 et = val
         try:
@@ -92,8 +98,9 @@ def parse_frames(buf: bytearray):
         yield et, obj
 
 
-async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
-                   cancel_event: asyncio.Event | None = None) -> AsyncIterator[tuple]:
+async def stream_q(
+    api_key: str, body: dict, *, timeout: float = 300, cancel_event: asyncio.Event | None = None
+) -> AsyncIterator[tuple]:
     """Yield (event_type, payload_obj) tuples. May yield ('_throttle', meta) on retry.
 
     Raises httpx.HTTPError on unrecoverable network failure, or RuntimeError
@@ -113,24 +120,24 @@ async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
         async with httpx.AsyncClient(timeout=timeout) as cx:
             while True:
                 try:
-                    async with cx.stream("POST", Q_URL,
-                                         headers=_q_headers(api_key), json=body) as r:
+                    async with cx.stream("POST", Q_URL, headers=_q_headers(api_key), json=body) as r:
                         # 401/403: try to rotate to a fallback key.
                         if r.status_code in (401, 403):
                             err_body = (await r.aread()).decode("utf-8", "replace")
-                            new_key = key_pool.mark_bad(
-                                api_key, reason=f"{r.status_code}: {err_body[:120]}")
+                            new_key = key_pool.mark_bad(api_key, reason=f"{r.status_code}: {err_body[:120]}")
                             if new_key and new_key != api_key:
-                                yield ("_throttle", {
-                                    "reason": f"key_rotated:{r.status_code}",
-                                    "attempt": attempt + 1,
-                                    "sleep": 0,
-                                })
+                                yield (
+                                    "_throttle",
+                                    {
+                                        "reason": f"key_rotated:{r.status_code}",
+                                        "attempt": attempt + 1,
+                                        "sleep": 0,
+                                    },
+                                )
                                 api_key = new_key
                                 attempt += 1
                                 if attempt > _MAX_RETRIES:
-                                    raise RuntimeError(
-                                        f"q {r.status_code} after key rotation: {err_body[:300]}")
+                                    raise RuntimeError(f"q {r.status_code} after key rotation: {err_body[:300]}")
                                 continue
                             # No fallback or same key returned — surface error.
                             raise RuntimeError(f"q {r.status_code}: {err_body[:400]}")
@@ -141,9 +148,11 @@ async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
                             err = (await r.aread()).decode("utf-8", "replace")
                             # Bedrock returns ThrottlingException /
                             # INSUFFICIENT_MODEL_CAPACITY with HTTP 400. Retry.
-                            if ("ThrottlingException" in err
-                                    or "INSUFFICIENT_MODEL_CAPACITY" in err
-                                    or "ServiceUnavailable" in err):
+                            if (
+                                "ThrottlingException" in err
+                                or "INSUFFICIENT_MODEL_CAPACITY" in err
+                                or "ServiceUnavailable" in err
+                            ):
                                 retriable = True
                             else:
                                 raise RuntimeError(f"q 400: {err[:400]}")
@@ -152,19 +161,18 @@ async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
                                 err = (await r.aread()).decode("utf-8", "replace")
                             attempt += 1
                             if attempt > _MAX_RETRIES:
-                                raise RuntimeError(
-                                    f"q {r.status_code} after {attempt} retries: {err[:300]}")
-                            sleep = min(_MAX_DELAY,
-                                        _BASE_DELAY * (2 ** (attempt - 1))) * (0.7 + 0.6 * random.random())
+                                raise RuntimeError(f"q {r.status_code} after {attempt} retries: {err[:300]}")
+                            sleep = min(_MAX_DELAY, _BASE_DELAY * (2 ** (attempt - 1))) * (0.7 + 0.6 * random.random())
                             # arm cooldown for sibling calls
-                            _COOLDOWN_UNTIL[api_key] = max(
-                                _COOLDOWN_UNTIL.get(api_key, 0),
-                                loop.time() + sleep)
-                            yield ("_throttle", {
-                                "reason": str(r.status_code),
-                                "attempt": attempt,
-                                "sleep": round(sleep, 2),
-                            })
+                            _COOLDOWN_UNTIL[api_key] = max(_COOLDOWN_UNTIL.get(api_key, 0), loop.time() + sleep)
+                            yield (
+                                "_throttle",
+                                {
+                                    "reason": str(r.status_code),
+                                    "attempt": attempt,
+                                    "sleep": round(sleep, 2),
+                                },
+                            )
                             await asyncio.sleep(sleep)
                             continue
                         if r.status_code >= 400:
@@ -185,7 +193,8 @@ async def stream_q(api_key: str, body: dict, *, timeout: float = 300,
                     if attempt > _MAX_RETRIES:
                         raise
                     sleep = min(_MAX_DELAY, _BASE_DELAY * (2 ** (attempt - 1)))
-                    yield ("_throttle", {"reason": f"net:{type(e).__name__}",
-                                          "attempt": attempt,
-                                          "sleep": round(sleep, 2)})
+                    yield (
+                        "_throttle",
+                        {"reason": f"net:{type(e).__name__}", "attempt": attempt, "sleep": round(sleep, 2)},
+                    )
                     await asyncio.sleep(sleep)

@@ -10,6 +10,7 @@ def pool(monkeypatch):
     monkeypatch.setenv("KIRO_API_KEY_ALT", "ksk_alt_one,ksk_alt_two")
     monkeypatch.setenv("KIRA_KEY_BAN_SECONDS", "3600")
     import agent_keys
+
     importlib.reload(agent_keys)
     return agent_keys.key_pool
 
@@ -53,7 +54,9 @@ def test_single_key_pool(monkeypatch):
     monkeypatch.setenv("KIRO_API_KEY", "only_one")
     monkeypatch.delenv("KIRO_API_KEY_ALT", raising=False)
     monkeypatch.delenv("KIRO_API_KEYS", raising=False)
-    import agent_keys; importlib.reload(agent_keys)
+    import agent_keys
+
+    importlib.reload(agent_keys)
     p = agent_keys.key_pool
     assert p.current() == "only_one"
     # mark_bad with single key still returns it (no alternative)
@@ -72,11 +75,15 @@ def test_unban_after_time(monkeypatch):
     monkeypatch.setenv("KIRO_API_KEY", "a")
     monkeypatch.setenv("KIRO_API_KEY_ALT", "b")
     monkeypatch.setenv("KIRA_KEY_BAN_SECONDS", "0")
-    import agent_keys; importlib.reload(agent_keys)
+    import agent_keys
+
+    importlib.reload(agent_keys)
     p = agent_keys.key_pool
     p.mark_bad("a", reason="x")
     # ban_seconds=0 means it's immediately unbanned in next loop tick
-    import time; time.sleep(0.01)
+    import time
+
+    time.sleep(0.01)
     # current() walks the pool; should pick whichever is not banned (b)
     # but after the tiny sleep, both may be unbanned again; just sanity-check
     assert p.current() in ("a", "b")

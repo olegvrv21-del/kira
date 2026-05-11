@@ -12,6 +12,7 @@ Public API:
   memory.add(text, file=None) -> {file, lines, chunks}
   memory.status() -> {root, files, chunks, mtime, excluded}
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -25,8 +26,7 @@ from pathlib import Path
 
 
 def _root() -> Path:
-    return Path(os.environ.get("KIRA_NOTEBOOK_DIR",
-                                str(Path.home() / "notebook"))).resolve()
+    return Path(os.environ.get("KIRA_NOTEBOOK_DIR", str(Path.home() / "notebook"))).resolve()
 
 
 def _excludes() -> list[str]:
@@ -35,15 +35,47 @@ def _excludes() -> list[str]:
 
 
 _TOKEN = re.compile(r"[A-Za-z\u0400-\u04FF][A-Za-z0-9\u0400-\u04FF_-]+")
-_STOP = set("""
-the a an and or to of in for on with by is are was were be been being
-и в на с о для к по от это эта этот как что
-""".split())
+_STOP = set(
+    [
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "by",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "и",
+        "в",
+        "на",
+        "с",
+        "о",
+        "для",
+        "к",
+        "по",
+        "от",
+        "это",
+        "эта",
+        "этот",
+        "как",
+        "что",
+    ]
+)
 
 
 def _tokenize(s: str) -> list[str]:
-    return [w.lower() for w in _TOKEN.findall(s)
-            if len(w) > 1 and w.lower() not in _STOP]
+    return [w.lower() for w in _TOKEN.findall(s) if len(w) > 1 and w.lower() not in _STOP]
 
 
 def _split_chunks(text: str, path: str) -> list[dict]:
@@ -58,26 +90,26 @@ def _split_chunks(text: str, path: str) -> list[dict]:
             if buf:
                 body = "\n".join(buf).strip()
                 if body:
-                    chunks.append({"file": path, "start_line": start,
-                                    "end_line": i - 1, "text": body,
-                                    "heading": last_heading})
+                    chunks.append(
+                        {"file": path, "start_line": start, "end_line": i - 1, "text": body, "heading": last_heading}
+                    )
                 buf, start = [], i
             last_heading = line.lstrip("# ").strip()
         if line.strip() == "" and buf and any(b.strip() for b in buf):
             body = "\n".join(buf).strip()
             if len(body) >= 12:  # skip tiny
-                chunks.append({"file": path, "start_line": start,
-                                "end_line": i - 1, "text": body,
-                                "heading": last_heading})
+                chunks.append(
+                    {"file": path, "start_line": start, "end_line": i - 1, "text": body, "heading": last_heading}
+                )
             buf, start = [], i + 1
             continue
         buf.append(line)
     if buf:
         body = "\n".join(buf).strip()
         if body:
-            chunks.append({"file": path, "start_line": start,
-                            "end_line": len(lines), "text": body,
-                            "heading": last_heading})
+            chunks.append(
+                {"file": path, "start_line": start, "end_line": len(lines), "text": body, "heading": last_heading}
+            )
     return chunks
 
 
@@ -186,22 +218,23 @@ class MemoryIndex:
                 if w not in tf:
                     continue
                 f = tf[w]
-                score += idf.get(w, 0.0) * (f * (k1 + 1)) / (
-                    f + k1 * (1 - b + b * dl / (self.avgdl or 1)))
+                score += idf.get(w, 0.0) * (f * (k1 + 1)) / (f + k1 * (1 - b + b * dl / (self.avgdl or 1)))
             if score > 0:
                 scores.append((score, i))
         scores.sort(reverse=True)
         out = []
         for sc, i in scores[:k]:
             ch = self.chunks[i]
-            out.append({
-                "file": ch["file"],
-                "heading": ch.get("heading", ""),
-                "start_line": ch["start_line"],
-                "end_line": ch["end_line"],
-                "score": round(sc, 3),
-                "snippet": ch["text"][:800],
-            })
+            out.append(
+                {
+                    "file": ch["file"],
+                    "heading": ch.get("heading", ""),
+                    "start_line": ch["start_line"],
+                    "end_line": ch["end_line"],
+                    "score": round(sc, 3),
+                    "snippet": ch["text"][:800],
+                }
+            )
         return out
 
     # ---- add ----
@@ -224,8 +257,7 @@ class MemoryIndex:
         with target.open("a", encoding="utf-8") as f:
             f.write(block)
         self.rebuild()
-        return {"file": rel, "lines": len(text.splitlines()) + 2,
-                "bytes": len(block.encode("utf-8"))}
+        return {"file": rel, "lines": len(text.splitlines()) + 2, "bytes": len(block.encode("utf-8"))}
 
     # ---- status ----
 

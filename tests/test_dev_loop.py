@@ -1,4 +1,5 @@
 """Smoke tests for dev_loop tool wiring (without invoking the model)."""
+
 import json
 from pathlib import Path
 
@@ -8,8 +9,7 @@ def test_dev_loop_tool_spec_present():
     specs = json.loads(p.read_text())
     names = [s["toolSpecification"]["name"] for s in specs]
     assert "dev_loop" in names
-    d = next(s["toolSpecification"] for s in specs
-             if s["toolSpecification"]["name"] == "dev_loop")
+    d = next(s["toolSpecification"] for s in specs if s["toolSpecification"]["name"] == "dev_loop")
     props = d["inputSchema"]["json"]["properties"]
     assert "task" in props
     assert d["inputSchema"]["json"]["required"] == ["task"]
@@ -17,6 +17,7 @@ def test_dev_loop_tool_spec_present():
 
 def test_dev_loop_in_host_mode_is_unsupported():
     import agent_tools
+
     # In host mode the tool must be present but return the sandbox-required
     # error so callers don't crash.
     assert "dev_loop" in agent_tools.TOOLS
@@ -27,11 +28,13 @@ def test_dev_loop_in_host_mode_is_unsupported():
 
 def test_dev_loop_handler_exists():
     import agent_runtime
+
     assert hasattr(agent_runtime, "_handle_dev_loop")
 
 
 def test_subagent_specs_exclude_use_subagent_only():
     import agent_runtime
+
     sub_names = [t["toolSpecification"]["name"] for t in agent_runtime.SUBAGENT_TOOL_SPECS]
     assert "use_subagent" not in sub_names
     # dev_loop CAN call subagent_silent internally, but the subagent itself

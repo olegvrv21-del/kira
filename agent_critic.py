@@ -11,13 +11,11 @@ reviewer that returns a structured verdict.
 Auto-mode: if KIRA_CRITIC_AUTO=1, the agent runtime inserts a critic call
 before any git_commit and denies the commit on BLOCK.
 """
+
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import re
-from typing import Any
 
 import q_client
 from agent_keys import key_pool
@@ -63,7 +61,7 @@ def parse_verdict(text: str) -> dict:
     """Parse the critic's response into {verdict, reason, issues}."""
     t = (text or "").strip()
     m = re.search(r"VERDICT\s*:\s*(OK|BLOCK)", t, re.IGNORECASE)
-    verdict = (m.group(1).upper() if m else "OK")
+    verdict = m.group(1).upper() if m else "OK"
     rm = re.search(r"REASON\s*:\s*(.+)", t)
     reason = (rm.group(1).strip() if rm else "").splitlines()[0] if rm else ""
     issues = []
@@ -80,13 +78,12 @@ def parse_verdict(text: str) -> dict:
                 continue
             else:
                 break
-    return {"verdict": verdict, "reason": reason, "issues": issues,
-            "raw": t[:4000]}
+    return {"verdict": verdict, "reason": reason, "issues": issues, "raw": t[:4000]}
 
 
-async def review_diff(api_key: str, diff: str, *, intent: str = "",
-                       model: str | None = None,
-                       timeout: float = 60.0) -> dict:
+async def review_diff(
+    api_key: str, diff: str, *, intent: str = "", model: str | None = None, timeout: float = 60.0
+) -> dict:
     """Run the critic on a diff. Returns parsed verdict dict."""
     if not diff or not diff.strip():
         return {"verdict": "OK", "reason": "empty diff", "issues": [], "raw": ""}
@@ -105,20 +102,21 @@ async def review_diff(api_key: str, diff: str, *, intent: str = "",
                     "modelId": model,
                 }
             },
-            "history": [{
-                "userInputMessage": {
-                    "content": CRITIC_SYSTEM,
-                    "userInputMessageContext": {},
-                    "origin": "KIRO_CLI",
-                    "modelId": model,
+            "history": [
+                {
+                    "userInputMessage": {
+                        "content": CRITIC_SYSTEM,
+                        "userInputMessageContext": {},
+                        "origin": "KIRO_CLI",
+                        "modelId": model,
+                    }
                 }
-            }],
+            ],
         }
     }
     text_chunks: list[str] = []
     try:
-        async for et, payload in q_client.stream_q(
-                key_pool.current() or api_key, body, timeout=timeout):
+        async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, timeout=timeout):
             if et == "_throttle" or et == "_cancelled":
                 continue
             if isinstance(payload, dict) and et == "assistantResponseEvent":
@@ -126,10 +124,7 @@ async def review_diff(api_key: str, diff: str, *, intent: str = "",
                 if c:
                     text_chunks.append(c)
     except Exception as e:
-        return {"verdict": "OK",
-                "reason": "",
-                "issues": [f"critic-error:{type(e).__name__}:{e}"],
-                "raw": ""}
+        return {"verdict": "OK", "reason": "", "issues": [f"critic-error:{type(e).__name__}:{e}"], "raw": ""}
     full = "".join(text_chunks)
     return parse_verdict(full)
 

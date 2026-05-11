@@ -7,6 +7,7 @@ Every handler returns a string (treated as a single text block by the caller).
 Raise an exception on failure; the agent loop converts it into an error
 toolResult.
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -16,8 +17,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 # ---------- helpers ----------
+
 
 def _expand(p: str) -> Path:
     return Path(os.path.expanduser(p)).resolve()
@@ -32,6 +33,7 @@ def _truncate(text: str, max_chars: int = 64_000) -> str:
 
 
 # ---------- execute_bash ----------
+
 
 def execute_bash(args: dict[str, Any], cwd: str) -> str:
     cmd = args["command"]
@@ -55,6 +57,7 @@ def execute_bash(args: dict[str, Any], cwd: str) -> str:
 
 # ---------- fs_read ----------
 
+
 def _read_line_op(op: dict[str, Any]) -> str:
     path = _expand(op["path"])
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -70,7 +73,7 @@ def _read_line_op(op: dict[str, Any]) -> str:
     e = min(len(lines), e)
     chunk = lines[s:e]
     width = len(str(e))
-    return "\n".join(f"{i+s+1:>{width}}: {ln}" for i, ln in enumerate(chunk))
+    return "\n".join(f"{i + s + 1:>{width}}: {ln}" for i, ln in enumerate(chunk))
 
 
 def _read_dir_op(op: dict[str, Any]) -> str:
@@ -116,7 +119,7 @@ def _read_search_op(op: dict[str, Any]) -> str:
             e = min(len(lines), i + ctx + 1)
             for j in range(s, e):
                 mark = ">" if j == i else " "
-                hits.append(f"{mark} {j+1}: {lines[j]}")
+                hits.append(f"{mark} {j + 1}: {lines[j]}")
             hits.append("---")
     return "\n".join(hits) or "(no matches)"
 
@@ -136,17 +139,20 @@ def fs_read(args: dict[str, Any], cwd: str) -> str:
                 r = f"(mode {mode!r} not implemented)"
         except Exception as e:
             r = f"ERROR: {type(e).__name__}: {e}"
-        header = f"=== {mode}: {op.get('path','?')} ==="
+        header = f"=== {mode}: {op.get('path', '?')} ==="
         results.append(f"{header}\n{r}")
     return _truncate("\n\n".join(results))
 
 
 # ---------- fs_write ----------
 
+
 def _backup_if_exists(path: Path) -> str | None:
     if not path.exists():
         return None
-    import shutil, time
+    import shutil
+    import time
+
     bak = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
     shutil.copy2(path, bak)
     return str(bak)
@@ -188,6 +194,7 @@ def fs_write(args: dict[str, Any], cwd: str) -> str:
 
 # ---------- glob ----------
 
+
 def glob_tool(args: dict[str, Any], cwd: str) -> str:
     pattern = args["pattern"]
     root = _expand(args.get("path") or cwd)
@@ -208,6 +215,7 @@ def glob_tool(args: dict[str, Any], cwd: str) -> str:
 
 
 # ---------- grep ----------
+
 
 def grep_tool(args: dict[str, Any], cwd: str) -> str:
     pattern = args["pattern"]
@@ -248,12 +256,14 @@ def grep_tool(args: dict[str, Any], cwd: str) -> str:
 
 # ---------- verify_change ----------
 
+
 def verify_change(args: dict[str, Any], cwd: str, sid: str | None = None) -> str:
     """Run validation checks after edits. Returns multi-line report.
     Checks: python syntax, optional curl, optional grep absence,
     optional shell command, optional service health.
     """
     import urllib.request
+
     reports: list[str] = []
     ok_all = True
     # python syntax
@@ -278,7 +288,8 @@ def verify_change(args: dict[str, Any], cwd: str, sid: str | None = None) -> str
             reports.append(f"FAIL http {u}: {e}")
     # absent_substrings: a pattern that MUST NOT appear in file
     for spec in args.get("absent_in", []) or []:
-        path = _expand(spec["path"]); pat = spec["pattern"]
+        path = _expand(spec["path"])
+        pat = spec["pattern"]
         try:
             txt = path.read_text(encoding="utf-8")
             n = txt.count(pat)
@@ -292,7 +303,8 @@ def verify_change(args: dict[str, Any], cwd: str, sid: str | None = None) -> str
             reports.append(f"FAIL absent {path}: {e}")
     # present_substrings
     for spec in args.get("present_in", []) or []:
-        path = _expand(spec["path"]); pat = spec["pattern"]
+        path = _expand(spec["path"])
+        pat = spec["pattern"]
         try:
             txt = path.read_text(encoding="utf-8")
             n = txt.count(pat)
@@ -306,8 +318,7 @@ def verify_change(args: dict[str, Any], cwd: str, sid: str | None = None) -> str
             reports.append(f"FAIL present {path}: {e}")
     # shell command (exit 0)
     for cmd in args.get("shell", []) or []:
-        proc = subprocess.run(["bash", "-c", cmd], capture_output=True,
-                              text=True, timeout=60)
+        proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=60)
         tag = "OK" if proc.returncode == 0 else "FAIL"
         if proc.returncode != 0:
             ok_all = False
@@ -319,18 +330,25 @@ def verify_change(args: dict[str, Any], cwd: str, sid: str | None = None) -> str
 
 # ---------- dispatcher ----------
 
+
 def _not_supported(args, cwd):
     raise RuntimeError("browser tools require KIRA_SANDBOX=1")
 
 
 def review_changes(args: dict[str, Any], cwd: str) -> str:
-    import asyncio, os, subprocess
+    import asyncio
+    import os
+    import subprocess
+
     diff = args.get("diff")
     if not diff:
         ref = args.get("ref") or "HEAD"
-        r = subprocess.run(["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
-                            "-C", cwd or ".", "diff", ref],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["git", "-c", "safe.directory=*", "-c", "core.pager=cat", "-C", cwd or ".", "diff", ref],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         diff = r.stdout
     if not (diff or "").strip():
         return "REVIEW=OK (no changes to review)"
@@ -338,13 +356,12 @@ def review_changes(args: dict[str, Any], cwd: str) -> str:
     if not api_key:
         return "REVIEW=OK (critic disabled: no KIRO_API_KEY)"
     import agent_critic
+
     intent = args.get("intent") or ""
     try:
         loop = asyncio.new_event_loop()
         try:
-            v = loop.run_until_complete(
-                agent_critic.review_diff(api_key, diff, intent=intent,
-                                          model=args.get("model")))
+            v = loop.run_until_complete(agent_critic.review_diff(api_key, diff, intent=intent, model=args.get("model")))
         finally:
             loop.close()
     except Exception as e:
@@ -360,6 +377,7 @@ def review_changes(args: dict[str, Any], cwd: str) -> str:
 
 def memory_search(args: dict[str, Any], cwd: str) -> str:
     import agent_memory
+
     q = (args.get("query") or "").strip()
     if not q:
         raise ValueError("query is required")
@@ -370,25 +388,25 @@ def memory_search(args: dict[str, Any], cwd: str) -> str:
     out = [f"MEMORY {len(hits)} hits for {q!r}:"]
     for h in hits:
         head = (" [" + h["heading"] + "]") if h.get("heading") else ""
-        out.append(f"\n--- {h['file']}:{h['start_line']}-{h['end_line']}{head} "
-                   f"(score={h['score']}) ---")
+        out.append(f"\n--- {h['file']}:{h['start_line']}-{h['end_line']}{head} (score={h['score']}) ---")
         out.append(h["snippet"])
     return "\n".join(out)
 
 
 def memory_add(args: dict[str, Any], cwd: str) -> str:
     import agent_memory
+
     text = (args.get("text") or "").strip()
     if not text:
         raise ValueError("text is required")
     file = args.get("file")
     info = agent_memory.memory.add(text, file=file)
-    return (f"MEMORY appended file={info['file']} "
-            f"bytes={info['bytes']} lines={info['lines']}")
+    return f"MEMORY appended file={info['file']} bytes={info['bytes']} lines={info['lines']}"
 
 
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     import agent_skills
+
     name = (args.get("name") or "").strip()
     if not name:
         raise ValueError("name is required")
@@ -434,8 +452,7 @@ TOOLS = {
 }
 
 
-def run_tool(name: str, args: dict[str, Any], cwd: str
-             ) -> tuple[str, str, list[dict] | None]:
+def run_tool(name: str, args: dict[str, Any], cwd: str) -> tuple[str, str, list[dict] | None]:
     """Returns (status, content_text, images_for_next_turn)."""
     fn = TOOLS.get(name)
     if fn is None:

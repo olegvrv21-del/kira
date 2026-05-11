@@ -1,0 +1,25 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv", "workspaces", "sandbox"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # long lines OK
+    "E701",   # multiple statements (compact lambdas)
+    "E702",   # semicolon
+    "E741",   # ambiguous var names (l, I, etc.)
+    "B008",   # function call in arg default (FastAPI Depends())
+    "B904",   # raise from
+    "SIM105", # contextlib.suppress
+    "SIM108", # ternary
+    "SIM117", # nested with
+    "UP015",  # open() mode
+    "E402",   # module-level imports not at top (conditional imports)
+    "B023",   # function uses loop var (intentional in same iter)
+    "I001",   # import sorting inside functions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811", "F841", "B018"]

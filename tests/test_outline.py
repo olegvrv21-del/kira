@@ -1,5 +1,7 @@
 """Outline regex parsing (host-side, no docker)."""
+
 import re
+
 import sandbox_tools as st
 
 
@@ -13,8 +15,7 @@ class A:
 def top():
     pass
 """
-    out = [(m.group("kw").strip(), m.group("name"))
-           for m in st._PY_PAT.finditer(src)]
+    out = [(m.group("kw").strip(), m.group("name")) for m in st._PY_PAT.finditer(src)]
     assert ("class", "A") in out
     assert ("def", "m") in out
     assert any(kw.startswith("async") and n == "n" for kw, n in out)
@@ -28,8 +29,7 @@ class Baz {}
 interface Iface { x: number }
 async function qux() {}
 """
-    out = [(m.group("kw").strip(), m.group("name"))
-           for m in st._JS_PAT.finditer(src)]
+    out = [(m.group("kw").strip(), m.group("name")) for m in st._JS_PAT.finditer(src)]
     names = {n for _, n in out}
     assert {"Foo", "bar", "Baz", "Iface", "qux"} <= names
 
@@ -43,8 +43,7 @@ func main() {}
 func (s *S) Method() {}
 type S struct{ x int }
 """
-    out = [(m.group("kw").strip(), m.group("name"))
-           for m in st._GO_PAT.finditer(src)]
+    out = [(m.group("kw").strip(), m.group("name")) for m in st._GO_PAT.finditer(src)]
     names = {n for _, n in out}
     assert {"main", "Method", "S"} <= names
 
@@ -52,4 +51,5 @@ type S struct{ x int }
 def test_outline_unsupported_lang_raises(tmp_path):
     # Construct fake args; we call the helper directly via the regex map lookup.
     import os
+
     assert os.path.splitext("foo.rb")[1] not in st._LANG_MAP

@@ -53,18 +53,17 @@ Actions:
                                   If shell exits non-zero on pre_tool, that's
                                   treated as deny (stderr -> message).
 """
+
 from __future__ import annotations
 
 import json
 import os
 import re
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
-CONFIG_PATH = Path(os.environ.get("KIRA_HOOKS_CONFIG",
-                                   str(Path(__file__).parent / "hooks.json")))
+CONFIG_PATH = Path(os.environ.get("KIRA_HOOKS_CONFIG", str(Path(__file__).parent / "hooks.json")))
 ALLOW_SHELL = os.environ.get("KIRA_HOOKS_ALLOW_SHELL", "0") in ("1", "true", "True")
 
 _CACHE: dict[str, Any] = {"mtime": 0.0, "hooks": []}
@@ -89,8 +88,7 @@ def _load() -> list[dict]:
     return hooks
 
 
-def _match(h: dict, event: str, tool: str, args: dict,
-           status: str | None = None, output: str | None = None) -> bool:
+def _match(h: dict, event: str, tool: str, args: dict, status: str | None = None, output: str | None = None) -> bool:
     if h.get("event") != event:
         return False
     m = h.get("match") or {}
@@ -123,12 +121,10 @@ def _match(h: dict, event: str, tool: str, args: dict,
     return True
 
 
-def _run_shell(cmd: str, env_extra: dict[str, str], timeout: int = 10
-               ) -> tuple[int, str, str]:
+def _run_shell(cmd: str, env_extra: dict[str, str], timeout: int = 10) -> tuple[int, str, str]:
     env = {**os.environ, **{k: str(v)[:4000] for k, v in env_extra.items()}}
     try:
-        r = subprocess.run(["bash", "-c", cmd], env=env,
-                           capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"hook shell timeout after {timeout}s"
@@ -140,7 +136,7 @@ def _trim(s: str | None, n: int = 4000) -> str:
     if not s:
         return ""
     s = str(s)
-    return s if len(s) <= n else s[: n // 2] + "\n...[trimmed]...\n" + s[-n // 2:]
+    return s if len(s) <= n else s[: n // 2] + "\n...[trimmed]...\n" + s[-n // 2 :]
 
 
 def run_pre_tool(sid: str, tool: str, args: dict) -> list[dict]:
@@ -156,36 +152,58 @@ def run_pre_tool(sid: str, tool: str, args: dict) -> list[dict]:
         hid = h.get("id") or f"{atype}:{tool}"
         if atype == "deny":
             msg = action.get("message") or "denied by hook"
-            out.append({"hook_id": hid, "event": "pre_tool", "type": "deny",
-                         "message": msg, "tool": tool})
+            out.append({"hook_id": hid, "event": "pre_tool", "type": "deny", "message": msg, "tool": tool})
             return out  # short-circuit
         if atype == "log":
-            out.append({"hook_id": hid, "event": "pre_tool", "type": "log",
-                         "message": action.get("message", ""), "tool": tool})
+            out.append(
+                {"hook_id": hid, "event": "pre_tool", "type": "log", "message": action.get("message", ""), "tool": tool}
+            )
         if atype == "shell":
             if not ALLOW_SHELL:
-                out.append({"hook_id": hid, "event": "pre_tool", "type": "log",
-                             "message": "shell hook skipped (KIRA_HOOKS_ALLOW_SHELL=0)",
-                             "tool": tool})
+                out.append(
+                    {
+                        "hook_id": hid,
+                        "event": "pre_tool",
+                        "type": "log",
+                        "message": "shell hook skipped (KIRA_HOOKS_ALLOW_SHELL=0)",
+                        "tool": tool,
+                    }
+                )
                 continue
-            rc, so, se = _run_shell(action["cmd"], {
-                "KIRA_HOOK_EVENT": "pre_tool",
-                "KIRA_HOOK_TOOL": tool,
-                "KIRA_HOOK_SID": sid,
-                "KIRA_HOOK_ARGS": json.dumps(args)[:4000],
-            }, timeout=int(action.get("timeout", 10)))
+            rc, so, se = _run_shell(
+                action["cmd"],
+                {
+                    "KIRA_HOOK_EVENT": "pre_tool",
+                    "KIRA_HOOK_TOOL": tool,
+                    "KIRA_HOOK_SID": sid,
+                    "KIRA_HOOK_ARGS": json.dumps(args)[:4000],
+                },
+                timeout=int(action.get("timeout", 10)),
+            )
             if rc != 0:
-                out.append({"hook_id": hid, "event": "pre_tool", "type": "deny",
-                             "message": (se or so or "shell hook denied").strip()[:500],
-                             "tool": tool})
+                out.append(
+                    {
+                        "hook_id": hid,
+                        "event": "pre_tool",
+                        "type": "deny",
+                        "message": (se or so or "shell hook denied").strip()[:500],
+                        "tool": tool,
+                    }
+                )
                 return out
-            out.append({"hook_id": hid, "event": "pre_tool", "type": "shell",
-                         "message": (so or "").strip()[:500], "tool": tool})
+            out.append(
+                {
+                    "hook_id": hid,
+                    "event": "pre_tool",
+                    "type": "shell",
+                    "message": (so or "").strip()[:500],
+                    "tool": tool,
+                }
+            )
     return out
 
 
-def run_post_tool(sid: str, tool: str, args: dict,
-                  status: str, output: str | None) -> list[dict]:
+def run_post_tool(sid: str, tool: str, args: dict, status: str, output: str | None) -> list[dict]:
     out = []
     for h in _load():
         if not _match(h, "post_tool", tool, args, status=status, output=output):
@@ -194,27 +212,52 @@ def run_post_tool(sid: str, tool: str, args: dict,
         atype = action.get("type")
         hid = h.get("id") or f"{atype}:{tool}"
         if atype == "log":
-            out.append({"hook_id": hid, "event": "post_tool", "type": "log",
-                         "message": action.get("message", ""), "tool": tool,
-                         "status": status})
+            out.append(
+                {
+                    "hook_id": hid,
+                    "event": "post_tool",
+                    "type": "log",
+                    "message": action.get("message", ""),
+                    "tool": tool,
+                    "status": status,
+                }
+            )
         elif atype == "shell":
             if not ALLOW_SHELL:
-                out.append({"hook_id": hid, "event": "post_tool", "type": "log",
-                             "message": "shell hook skipped (KIRA_HOOKS_ALLOW_SHELL=0)",
-                             "tool": tool, "status": status})
+                out.append(
+                    {
+                        "hook_id": hid,
+                        "event": "post_tool",
+                        "type": "log",
+                        "message": "shell hook skipped (KIRA_HOOKS_ALLOW_SHELL=0)",
+                        "tool": tool,
+                        "status": status,
+                    }
+                )
                 continue
-            rc, so, se = _run_shell(action["cmd"], {
-                "KIRA_HOOK_EVENT": "post_tool",
-                "KIRA_HOOK_TOOL": tool,
-                "KIRA_HOOK_SID": sid,
-                "KIRA_HOOK_ARGS": json.dumps(args)[:4000],
-                "KIRA_HOOK_STATUS": status,
-                "KIRA_HOOK_OUTPUT": _trim(output, 4000),
-            }, timeout=int(action.get("timeout", 10)))
-            out.append({"hook_id": hid, "event": "post_tool",
-                         "type": "shell", "rc": rc,
-                         "message": (so or se or "").strip()[:500], "tool": tool,
-                         "status": status})
+            rc, so, se = _run_shell(
+                action["cmd"],
+                {
+                    "KIRA_HOOK_EVENT": "post_tool",
+                    "KIRA_HOOK_TOOL": tool,
+                    "KIRA_HOOK_SID": sid,
+                    "KIRA_HOOK_ARGS": json.dumps(args)[:4000],
+                    "KIRA_HOOK_STATUS": status,
+                    "KIRA_HOOK_OUTPUT": _trim(output, 4000),
+                },
+                timeout=int(action.get("timeout", 10)),
+            )
+            out.append(
+                {
+                    "hook_id": hid,
+                    "event": "post_tool",
+                    "type": "shell",
+                    "rc": rc,
+                    "message": (so or se or "").strip()[:500],
+                    "tool": tool,
+                    "status": status,
+                }
+            )
     return out
 
 
@@ -227,16 +270,24 @@ def run_session_start(sid: str) -> list[dict]:
         atype = action.get("type")
         hid = h.get("id") or f"{atype}:session_start"
         if atype == "log":
-            out.append({"hook_id": hid, "event": "on_session_start",
-                         "type": "log", "message": action.get("message", "")})
+            out.append(
+                {"hook_id": hid, "event": "on_session_start", "type": "log", "message": action.get("message", "")}
+            )
         elif atype == "shell" and ALLOW_SHELL:
-            rc, so, se = _run_shell(action["cmd"],
-                                     {"KIRA_HOOK_EVENT": "on_session_start",
-                                      "KIRA_HOOK_SID": sid},
-                                     timeout=int(action.get("timeout", 10)))
-            out.append({"hook_id": hid, "event": "on_session_start",
-                         "type": "shell", "rc": rc,
-                         "message": (so or se).strip()[:500]})
+            rc, so, se = _run_shell(
+                action["cmd"],
+                {"KIRA_HOOK_EVENT": "on_session_start", "KIRA_HOOK_SID": sid},
+                timeout=int(action.get("timeout", 10)),
+            )
+            out.append(
+                {
+                    "hook_id": hid,
+                    "event": "on_session_start",
+                    "type": "shell",
+                    "rc": rc,
+                    "message": (so or se).strip()[:500],
+                }
+            )
     return out
 
 

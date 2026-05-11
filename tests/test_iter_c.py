@@ -1,4 +1,5 @@
 """Tests for Iteration C: test-output parser, tool spec inventory."""
+
 import sandbox_tools
 
 
@@ -11,9 +12,11 @@ def test_parse_pytest_pass():
 
 
 def test_parse_pytest_fail():
-    text = ("FAILED tests/test_a.py::test_x - AssertionError\n"
-            "FAILED tests/test_a.py::test_y - ValueError\n"
-            "2 failed, 10 passed in 1.23s\n")
+    text = (
+        "FAILED tests/test_a.py::test_x - AssertionError\n"
+        "FAILED tests/test_a.py::test_y - ValueError\n"
+        "2 failed, 10 passed in 1.23s\n"
+    )
     out = sandbox_tools._parse_test_output("pytest", text, 1)
     assert out.startswith("TESTS=FAIL")
     assert "failed=2" in out
@@ -45,8 +48,8 @@ def test_parse_go_fail():
 def test_tool_spec_inventory_iter_c():
     import json
     from pathlib import Path
-    specs = json.loads((Path(__file__).resolve().parent.parent /
-                        "agent_tool_specs.json").read_text())
+
+    specs = json.loads((Path(__file__).resolve().parent.parent / "agent_tool_specs.json").read_text())
     names = {t["toolSpecification"]["name"] for t in specs}
     for n in ("git", "git_commit", "run_tests", "lint"):
         assert n in names

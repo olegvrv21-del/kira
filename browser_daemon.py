@@ -3,16 +3,16 @@
 Listens on 127.0.0.1:9000 inside the container. Holds a single Page object
 between requests so navigation history and DOM state persist.
 """
+
 from __future__ import annotations
 
 import asyncio
 import base64
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from playwright.async_api import Browser, Page, async_playwright
 from pydantic import BaseModel
-from playwright.async_api import async_playwright, Page, Browser
 
 
 class NavReq(BaseModel):
@@ -43,19 +43,18 @@ class WaitReq(BaseModel):
     timeout_ms: int = 15000
 
 
-state = {"page": None, "browser": None, "pw": None,
-         "console_logs": [], "network_log": [], "network_recording": False}
+state = {"page": None, "browser": None, "pw": None, "console_logs": [], "network_log": [], "network_recording": False}
 _lock = asyncio.Lock()
 
 _DEVICES = {
     # name -> (width, height, dpr, mobile, touch, ua_hint)
-    "iPhone 14":      (390, 844, 3, True, True, "iphone"),
-    "iPhone SE":      (375, 667, 2, True, True, "iphone"),
-    "Pixel 7":        (412, 915, 2.625, True, True, "android"),
-    "iPad":           (820, 1180, 2, True, True, "ipad"),
-    "Desktop":        (1280, 800, 1, False, False, ""),
-    "Desktop 1080p":  (1920, 1080, 1, False, False, ""),
-    "Desktop 4K":     (3840, 2160, 2, False, False, ""),
+    "iPhone 14": (390, 844, 3, True, True, "iphone"),
+    "iPhone SE": (375, 667, 2, True, True, "iphone"),
+    "Pixel 7": (412, 915, 2.625, True, True, "android"),
+    "iPad": (820, 1180, 2, True, True, "ipad"),
+    "Desktop": (1280, 800, 1, False, False, ""),
+    "Desktop 1080p": (1920, 1080, 1, False, False, ""),
+    "Desktop 4K": (3840, 2160, 2, False, False, ""),
 }
 
 
@@ -72,38 +71,55 @@ async def lifespan(app: FastAPI):
     # Console capture (ring buffer of 500).
     def on_console(msg):
         try:
-            state["console_logs"].append({
-                "type": msg.type, "text": msg.text,
-                "url": page.url,
-            })
+            state["console_logs"].append(
+                {
+                    "type": msg.type,
+                    "text": msg.text,
+                    "url": page.url,
+                }
+            )
             if len(state["console_logs"]) > 500:
                 del state["console_logs"][:-500]
         except Exception:
             pass
+
     page.on("console", on_console)
-    page.on("pageerror", lambda e: state["console_logs"].append(
-        {"type": "pageerror", "text": str(e), "url": page.url}))
+    page.on("pageerror", lambda e: state["console_logs"].append({"type": "pageerror", "text": str(e), "url": page.url}))
 
     def on_request_finished(req):
         if not state["network_recording"]:
             return
         try:
             r = req.response()
-            state["network_log"].append({
-                "url": req.url, "method": req.method,
-                "status": (r.status if r else None),
-                "resource_type": req.resource_type,
-            })
+            state["network_log"].append(
+                {
+                    "url": req.url,
+                    "method": req.method,
+                    "status": (r.status if r else None),
+                    "resource_type": req.resource_type,
+                }
+            )
             if len(state["network_log"]) > 2000:
                 del state["network_log"][:-2000]
         except Exception:
             pass
+
     page.on("requestfinished", on_request_finished)
-    page.on("requestfailed", lambda r: state["network_recording"]
-            and state["network_log"].append({
-                "url": r.url, "method": r.method, "status": None,
-                "failure": (r.failure or ""), "resource_type": r.resource_type,
-            }))
+    page.on(
+        "requestfailed",
+        lambda r: (
+            state["network_recording"]
+            and state["network_log"].append(
+                {
+                    "url": r.url,
+                    "method": r.method,
+                    "status": None,
+                    "failure": (r.failure or ""),
+                    "resource_type": r.resource_type,
+                }
+            )
+        ),
+    )
     state["pw"] = pw
     state["browser"] = browser
     state["page"] = page
@@ -127,8 +143,7 @@ async def healthz():
 async def navigate(req: NavReq):
     async with _lock:
         page: Page = state["page"]
-        resp = await page.goto(req.url, wait_until=req.wait_until,
-                                timeout=req.timeout_ms)
+        resp = await page.goto(req.url, wait_until=req.wait_until, timeout=req.timeout_ms)
         return {
             "url": page.url,
             "status": resp.status if resp else None,
@@ -143,10 +158,10 @@ async def eval_expr(req: EvalReq):
         # wrap in IIFE so users can pass either an expression or a statement block
         wrapped = f"(async () => {{ return ({req.expression}); }})()"
         try:
-            result = await asyncio.wait_for(
-                page.evaluate(wrapped), timeout=req.timeout_ms / 1000)
+            result = await asyncio.wait_for(page.evaluate(wrapped), timeout=req.timeout_ms / 1000)
             try:
                 import json
+
                 serialized = json.dumps(result, ensure_ascii=False, default=str)
             except Exception:
                 serialized = repr(result)
@@ -160,8 +175,7 @@ async def screenshot():
     async with _lock:
         page: Page = state["page"]
         png = await page.screenshot(type="png", full_page=False)
-        return {"png_b64": base64.b64encode(png).decode("ascii"),
-                "url": page.url, "title": await page.title()}
+        return {"png_b64": base64.b64encode(png).decode("ascii"), "url": page.url, "title": await page.title()}
 
 
 @app.post("/text")
@@ -169,8 +183,7 @@ async def text():
     async with _lock:
         page: Page = state["page"]
         body = await page.evaluate("() => document.body ? document.body.innerText : ''")
-        return {"text": body[:200_000], "url": page.url,
-                "title": await page.title()}
+        return {"text": body[:200_000], "url": page.url, "title": await page.title()}
 
 
 @app.post("/click")
@@ -247,9 +260,7 @@ async def network_log(req: dict | None = None):
     logs = state["network_log"]
     if flt:
         logs = [r for r in logs if flt in (r.get("url") or "").lower()]
-    return {"logs": logs[-limit:],
-            "total": len(state["network_log"]),
-            "recording": state["network_recording"]}
+    return {"logs": logs[-limit:], "total": len(state["network_log"]), "recording": state["network_recording"]}
 
 
 @app.post("/accessibility")
@@ -291,8 +302,7 @@ async def emulate(req: EmulateReq):
         try:
             if req.device:
                 if req.device not in _DEVICES:
-                    return {"error": f"unknown device {req.device!r}; "
-                                      f"available: {list(_DEVICES)}"}
+                    return {"error": f"unknown device {req.device!r}; available: {list(_DEVICES)}"}
                 w, h, dpr, mobile, touch, _ = _DEVICES[req.device]
                 await page.set_viewport_size({"width": w, "height": h})
                 applied["device"] = req.device
@@ -300,8 +310,7 @@ async def emulate(req: EmulateReq):
                 applied["dpr"] = dpr
                 applied["mobile"] = mobile
             if req.width and req.height:
-                await page.set_viewport_size({"width": req.width,
-                                              "height": req.height})
+                await page.set_viewport_size({"width": req.width, "height": req.height})
                 applied["viewport"] = (req.width, req.height)
             if req.dark_mode is not None:
                 await page.emulate_media(color_scheme="dark" if req.dark_mode else "light")
@@ -316,4 +325,5 @@ async def emulate(req: EmulateReq):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=9000, log_level="warning")

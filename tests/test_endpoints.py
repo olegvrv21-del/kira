@@ -1,4 +1,5 @@
 """FastAPI endpoint smoke tests via TestClient."""
+
 import os
 import shutil
 from pathlib import Path
@@ -15,8 +16,7 @@ def test_models_have_metadata(app_client):
     assert r.status_code == 200
     assert d["models"] and "default" in d
     m = d["models"][0]
-    for k in ("id", "label", "provider", "tier", "multiplier",
-              "description", "strengths"):
+    for k in ("id", "label", "provider", "tier", "multiplier", "description", "strengths"):
         assert k in m, f"missing {k}"
 
 
@@ -35,22 +35,31 @@ def test_root_serves_html(app_client):
     assert 'id="models-view"' in body
     assert 'id="actions-view"' in body
     assert 'data-nav="actions"' in body
-    assert 'applyModel(' in body
-    assert 'setModel(' not in body  # no broken legacy ref
+    assert "applyModel(" in body
+    assert "setModel(" not in body  # no broken legacy ref
     assert "type === 'iframe'" in body  # iframe handler shipped
 
 
 def test_tool_specs_include_new_tools():
     import json
     from pathlib import Path
-    specs = json.loads((Path(__file__).resolve().parent.parent /
-                        "agent_tool_specs.json").read_text())
+
+    specs = json.loads((Path(__file__).resolve().parent.parent / "agent_tool_specs.json").read_text())
     names = {t["toolSpecification"]["name"] for t in specs}
-    for n in ("plan", "verify_change", "change_dir", "patch",
-              "llm_one_shot", "output_iframe",
-              "keyword_search", "outline",
-              "browser_console_logs", "browser_network",
-              "browser_accessibility", "browser_emulate"):
+    for n in (
+        "plan",
+        "verify_change",
+        "change_dir",
+        "patch",
+        "llm_one_shot",
+        "output_iframe",
+        "keyword_search",
+        "outline",
+        "browser_console_logs",
+        "browser_network",
+        "browser_accessibility",
+        "browser_emulate",
+    ):
         assert n in names, f"tool spec missing: {n}"
 
 
@@ -83,10 +92,16 @@ def test_rollback_endpoint_404(app_client):
 
 
 def test_action_get_endpoint(app_client, store):
-    aid = store.log_action("sx", "fs_write", {"path": "/x"}, ok=True,
-                           file="/x", backup="/x.bak",
-                           diff="--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n",
-                           tool_use_id="tu")
+    aid = store.log_action(
+        "sx",
+        "fs_write",
+        {"path": "/x"},
+        ok=True,
+        file="/x",
+        backup="/x.bak",
+        diff="--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n",
+        tool_use_id="tu",
+    )
     r = app_client.get(f"/agent/actions/{aid}")
     assert r.status_code == 200
     d = r.json()
@@ -99,8 +114,7 @@ def test_rollback_roundtrip(app_client, tmp_path, store):
     bak = tmp_path / "r.txt.bak.1"
     shutil.copy2(f, bak)
     f.write_text("modified")
-    aid = store.log_action("sid-rt", "fs_write", {"path": str(f)},
-                           ok=True, file=str(f), backup=str(bak))
+    aid = store.log_action("sid-rt", "fs_write", {"path": str(f)}, ok=True, file=str(f), backup=str(bak))
     r = app_client.post(f"/agent/actions/{aid}/rollback")
     assert r.status_code == 200, r.text
     assert f.read_text() == "original"
@@ -110,8 +124,7 @@ def test_rollback_roundtrip(app_client, tmp_path, store):
 
 
 def test_rollback_missing_backup_400(app_client, store):
-    aid = store.log_action("sid-x", "execute_bash", {"command": "ls"},
-                           ok=True)  # no file/backup
+    aid = store.log_action("sid-x", "execute_bash", {"command": "ls"}, ok=True)  # no file/backup
     r = app_client.post(f"/agent/actions/{aid}/rollback")
     assert r.status_code == 400
 

@@ -7,6 +7,7 @@ Table schema:
 History entries are the raw Q-protocol turns (the same dicts kept in memory).
 Images embedded as base64 inflate rows; SQLite handles BLOBs of MB size fine.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,6 +30,7 @@ def extract_user_text(content: str) -> str | None:
         return t or None
     # Fallback: not wrapped (e.g. very first system-prompt turn) — caller handles.
     return None
+
 
 DB_PATH = Path(__file__).parent / "agent_sessions.db"
 
@@ -99,11 +101,13 @@ def init() -> None:
 
 def _today_key() -> str:
     import datetime
+
     return datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
 
 def _month_key() -> str:
     import datetime
+
     return datetime.datetime.utcnow().strftime("%Y-%m")
 
 
@@ -144,8 +148,7 @@ def get_session_credits(sid: str) -> float:
 
 def get_today_credits() -> float:
     with _conn() as c:
-        row = c.execute("SELECT credits FROM daily_credits WHERE day=?",
-                        (_today_key(),)).fetchone()
+        row = c.execute("SELECT credits FROM daily_credits WHERE day=?", (_today_key(),)).fetchone()
     return float(row[0]) if row else 0.0
 
 
@@ -154,9 +157,7 @@ def load_history(sid: str) -> list[dict] | None:
         row = c.execute("SELECT 1 FROM sessions WHERE sid=?", (sid,)).fetchone()
         if not row:
             return None
-        rows = c.execute(
-            "SELECT msg_json FROM history WHERE sid=? ORDER BY idx", (sid,)
-        ).fetchall()
+        rows = c.execute("SELECT msg_json FROM history WHERE sid=? ORDER BY idx", (sid,)).fetchall()
     return [json.loads(r[0]) for r in rows]
 
 
@@ -194,11 +195,17 @@ def list_sessions(limit: int = 100) -> list[dict[str, Any]]:
     with _conn() as c:
         for r in rows:
             cred = c.execute("SELECT credits FROM sessions WHERE sid=?", (r[0],)).fetchone()
-            out.append({
-                "sid": r[0], "title": r[1], "model": r[2],
-                "created_at": r[3], "updated_at": r[4], "n_msgs": r[5],
-                "credits": float(cred[0]) if cred and cred[0] is not None else 0.0,
-            })
+            out.append(
+                {
+                    "sid": r[0],
+                    "title": r[1],
+                    "model": r[2],
+                    "created_at": r[3],
+                    "updated_at": r[4],
+                    "n_msgs": r[5],
+                    "credits": float(cred[0]) if cred and cred[0] is not None else 0.0,
+                }
+            )
     return out
 
 
@@ -250,10 +257,17 @@ def cleanup_old_sessions(max_age_days: int) -> list[str]:
     return sids
 
 
-def log_action(sid: str, tool: str, args: dict, ok: bool,
-               error: str | None = None, file: str | None = None,
-               backup: str | None = None, diff: str | None = None,
-               tool_use_id: str | None = None) -> int:
+def log_action(
+    sid: str,
+    tool: str,
+    args: dict,
+    ok: bool,
+    error: str | None = None,
+    file: str | None = None,
+    backup: str | None = None,
+    diff: str | None = None,
+    tool_use_id: str | None = None,
+) -> int:
     try:
         args_s = json.dumps(args, ensure_ascii=False)[:8000]
     except Exception:
@@ -262,9 +276,18 @@ def log_action(sid: str, tool: str, args: dict, ok: bool,
         cur = c.execute(
             "INSERT INTO actions(sid, ts, tool, args_json, ok, error, file, backup, diff, tool_use_id) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (sid, time.time(), tool, args_s, 1 if ok else 0,
-             (error or "")[:4000], file, backup,
-             (diff or None), tool_use_id),
+            (
+                sid,
+                time.time(),
+                tool,
+                args_s,
+                1 if ok else 0,
+                (error or "")[:4000],
+                file,
+                backup,
+                (diff or None),
+                tool_use_id,
+            ),
         )
         return int(cur.lastrowid)
 
@@ -274,15 +297,21 @@ _ACTION_COLS = "id, sid, ts, tool, args_json, ok, error, file, backup, diff, too
 
 def _action_row(r) -> dict:
     return {
-        "id": r[0], "sid": r[1], "ts": r[2], "tool": r[3],
-        "args": r[4], "ok": bool(r[5]), "error": r[6],
-        "file": r[7], "backup": r[8], "diff": r[9],
+        "id": r[0],
+        "sid": r[1],
+        "ts": r[2],
+        "tool": r[3],
+        "args": r[4],
+        "ok": bool(r[5]),
+        "error": r[6],
+        "file": r[7],
+        "backup": r[8],
+        "diff": r[9],
         "tool_use_id": r[10],
     }
 
 
-def list_actions(sid: str | None = None, limit: int = 200,
-                 include_diff: bool = False) -> list[dict]:
+def list_actions(sid: str | None = None, limit: int = 200, include_diff: bool = False) -> list[dict]:
     q = f"SELECT {_ACTION_COLS} FROM actions"
     params: tuple = ()
     if sid:
@@ -301,8 +330,7 @@ def list_actions(sid: str | None = None, limit: int = 200,
     return out
 
 
-def compute_metrics(sid: str | None = None, window_seconds: float | None = None
-                    ) -> dict:
+def compute_metrics(sid: str | None = None, window_seconds: float | None = None) -> dict:
     """Aggregate stats over the `actions` table.
 
     If sid is None: global metrics. Else: per-session.
@@ -311,31 +339,31 @@ def compute_metrics(sid: str | None = None, window_seconds: float | None = None
     where = []
     params: list = []
     if sid:
-        where.append("sid=?"); params.append(sid)
+        where.append("sid=?")
+        params.append(sid)
     if window_seconds:
-        where.append("ts>?"); params.append(time.time() - float(window_seconds))
+        where.append("ts>?")
+        params.append(time.time() - float(window_seconds))
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
     with _conn() as c:
         total = c.execute(f"SELECT COUNT(*) FROM actions{wsql}", params).fetchone()[0] or 0
-        ok = c.execute(f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} ok=1",
-                       params).fetchone()[0] or 0
+        ok = (
+            c.execute(f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} ok=1", params).fetchone()[0]
+            or 0
+        )
         fail = total - ok
         by_tool_rows = c.execute(
             f"SELECT tool, COUNT(*) as n, SUM(ok) as okn FROM actions{wsql} GROUP BY tool ORDER BY n DESC",
             params,
         ).fetchall()
-        sessions = c.execute(
-            f"SELECT COUNT(DISTINCT sid) FROM actions{wsql}", params
-        ).fetchone()[0] or 0
+        sessions = c.execute(f"SELECT COUNT(DISTINCT sid) FROM actions{wsql}", params).fetchone()[0] or 0
         # fs_write -> verify_change ratio: for each fs_write/patch event, look
         # whether a verify_change action followed it within 10 subsequent
         # actions of the same session.
         wsql_writes = wsql + (" AND" if wsql else " WHERE") + " tool IN ('fs_write','patch')"
-        writes = c.execute(
-            f"SELECT id, sid, ts FROM actions{wsql_writes}", params
-        ).fetchall()
+        writes = c.execute(f"SELECT id, sid, ts FROM actions{wsql_writes}", params).fetchall()
         verified_writes = 0
-        for wid, wsid, wts in writes:
+        for _wid, wsid, wts in writes:
             r = c.execute(
                 "SELECT 1 FROM actions WHERE sid=? AND ts>? AND tool='verify_change' ORDER BY ts LIMIT 1",
                 (wsid, wts),
@@ -345,15 +373,21 @@ def compute_metrics(sid: str | None = None, window_seconds: float | None = None
         # Rollback approximation: actions where args contain '"rollback"' OR
         # post-write rollback is tracked separately by /agent/actions/{id}/rollback;
         # we don't have a flag, so we count actions tagged tool='_rollback'.
-        rollbacks = c.execute(
-            f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_rollback'",
-            params,
-        ).fetchone()[0] or 0
+        rollbacks = (
+            c.execute(
+                f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_rollback'",
+                params,
+            ).fetchone()[0]
+            or 0
+        )
         # Hook denies: tool='_hook_deny'.
-        hook_denies = c.execute(
-            f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_hook_deny'",
-            params,
-        ).fetchone()[0] or 0
+        hook_denies = (
+            c.execute(
+                f"SELECT COUNT(*) FROM actions{wsql}{' AND' if wsql else ' WHERE'} tool='_hook_deny'",
+                params,
+            ).fetchone()[0]
+            or 0
+        )
         # Top error tools
         top_errors = c.execute(
             f"SELECT tool, COUNT(*) as n FROM actions{wsql}{' AND' if wsql else ' WHERE'} ok=0 GROUP BY tool ORDER BY n DESC LIMIT 5",
@@ -368,8 +402,7 @@ def compute_metrics(sid: str | None = None, window_seconds: float | None = None
         "success_rate": (ok / total) if total else None,
         "sessions": sessions,
         "by_tool": [
-            {"tool": t, "count": n, "ok": (okn or 0),
-             "success_rate": (okn or 0) / n if n else None}
+            {"tool": t, "count": n, "ok": (okn or 0), "success_rate": (okn or 0) / n if n else None}
             for (t, n, okn) in by_tool_rows
         ],
         "writes": len(writes),
@@ -384,7 +417,8 @@ def compute_metrics(sid: str | None = None, window_seconds: float | None = None
 def get_action(aid: int) -> dict | None:
     with _conn() as c:
         r = c.execute(
-            f"SELECT {_ACTION_COLS} FROM actions WHERE id=?", (aid,),
+            f"SELECT {_ACTION_COLS} FROM actions WHERE id=?",
+            (aid,),
         ).fetchone()
     return _action_row(r) if r else None
 
@@ -402,7 +436,8 @@ def set_meta(sid: str, key: str, value) -> None:
 def get_meta(sid: str, key: str, default=None):
     with _conn() as c:
         r = c.execute(
-            "SELECT value FROM session_meta WHERE sid=? AND key=?", (sid, key),
+            "SELECT value FROM session_meta WHERE sid=? AND key=?",
+            (sid, key),
         ).fetchone()
     if not r:
         return default
@@ -415,7 +450,8 @@ def get_meta(sid: str, key: str, default=None):
 def get_all_meta(sid: str) -> dict:
     with _conn() as c:
         rows = c.execute(
-            "SELECT key, value FROM session_meta WHERE sid=?", (sid,),
+            "SELECT key, value FROM session_meta WHERE sid=?",
+            (sid,),
         ).fetchall()
     out = {}
     for k, v in rows:

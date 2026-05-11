@@ -1,13 +1,14 @@
-import os
 import json
-import time
+import os
 import struct
+import time
 import uuid
-import httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
-from pydantic import BaseModel
 from typing import Any
+
+import httpx
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 import agent_runtime
 import agent_skills
@@ -16,41 +17,90 @@ OMNI_URL = os.environ.get("OMNI_URL", "http://localhost:8128/v1")
 OMNI_KEY = os.environ.get("OPENAI_API_KEY", "")
 KIRO_API_KEY = os.environ.get("KIRO_API_KEY", "")
 from agent_keys import key_pool  # noqa: E402
+
 KIRO_Q_URL = "https://q.us-east-1.amazonaws.com/"
 DEFAULT_MODEL = "q/claude-opus-4.7" if KIRO_API_KEY else "kr/claude-sonnet-4.5"
-SYSTEM_PROMPT = (
-    "Ты — Кира, старший инженер-напарник. Отвечаешь по-русски, "
-    "кратко и по делу, без эмодзи."
-)
+SYSTEM_PROMPT = "Ты — Кира, старший инженер-напарник. Отвечаешь по-русски, кратко и по делу, без эмодзи."
+
 
 def _m(id, label, provider, tier, mult, desc, strengths):
-    return {"id": id, "label": label, "provider": provider, "tier": tier,
-            "multiplier": mult, "description": desc, "strengths": strengths}
+    return {
+        "id": id,
+        "label": label,
+        "provider": provider,
+        "tier": tier,
+        "multiplier": mult,
+        "description": desc,
+        "strengths": strengths,
+    }
+
 
 _KR_MODELS = [
-    _m("kr/claude-sonnet-4.5", "Claude Sonnet 4.5", "Kira (Anthropic)", "sonnet", 1.0,
-       "Сбалансированная модель для большинства задач.",
-       ["Код", "Анализ", "Длинные диалоги"]),
-    _m("kr/claude-haiku-4.5",  "Claude Haiku 4.5",  "Kira (Anthropic)", "haiku", 0.2,
-       "Быстрая и дешёвая модель для коротких запросов.",
-       ["Скорость", "Низкая стоимость"]),
+    _m(
+        "kr/claude-sonnet-4.5",
+        "Claude Sonnet 4.5",
+        "Kira (Anthropic)",
+        "sonnet",
+        1.0,
+        "Сбалансированная модель для большинства задач.",
+        ["Код", "Анализ", "Длинные диалоги"],
+    ),
+    _m(
+        "kr/claude-haiku-4.5",
+        "Claude Haiku 4.5",
+        "Kira (Anthropic)",
+        "haiku",
+        0.2,
+        "Быстрая и дешёвая модель для коротких запросов.",
+        ["Скорость", "Низкая стоимость"],
+    ),
 ]
 _Q_MODELS = [
-    _m("q/claude-opus-4.7",   "Claude Opus 4.7",   "Kiro Q (Anthropic)", "opus",   5.0,
-       "Топовая модель для сложных задач и архитектуры.",
-       ["Рассуждение", "Архитектура", "Большой контекст"]),
-    _m("q/claude-opus-4.6",   "Claude Opus 4.6",   "Kiro Q (Anthropic)", "opus",   5.0,
-       "Предыдущее поколение Opus, стабильная.",
-       ["Рассуждение", "Код"]),
-    _m("q/claude-sonnet-4.6", "Claude Sonnet 4.6", "Kiro Q (Anthropic)", "sonnet", 1.0,
-       "Универсальная рабочая лошадка.",
-       ["Код", "Универсальность"]),
-    _m("q/claude-sonnet-4.5", "Claude Sonnet 4.5", "Kiro Q (Anthropic)", "sonnet", 1.0,
-       "Предыдущий Sonnet.",
-       ["Стабильность"]),
-    _m("q/claude-haiku-4.5",  "Claude Haiku 4.5",  "Kiro Q (Anthropic)", "haiku",  0.2,
-       "Быстрая и дешёвая.",
-       ["Скорость", "Низкая стоимость"]),
+    _m(
+        "q/claude-opus-4.7",
+        "Claude Opus 4.7",
+        "Kiro Q (Anthropic)",
+        "opus",
+        5.0,
+        "Топовая модель для сложных задач и архитектуры.",
+        ["Рассуждение", "Архитектура", "Большой контекст"],
+    ),
+    _m(
+        "q/claude-opus-4.6",
+        "Claude Opus 4.6",
+        "Kiro Q (Anthropic)",
+        "opus",
+        5.0,
+        "Предыдущее поколение Opus, стабильная.",
+        ["Рассуждение", "Код"],
+    ),
+    _m(
+        "q/claude-sonnet-4.6",
+        "Claude Sonnet 4.6",
+        "Kiro Q (Anthropic)",
+        "sonnet",
+        1.0,
+        "Универсальная рабочая лошадка.",
+        ["Код", "Универсальность"],
+    ),
+    _m(
+        "q/claude-sonnet-4.5",
+        "Claude Sonnet 4.5",
+        "Kiro Q (Anthropic)",
+        "sonnet",
+        1.0,
+        "Предыдущий Sonnet.",
+        ["Стабильность"],
+    ),
+    _m(
+        "q/claude-haiku-4.5",
+        "Claude Haiku 4.5",
+        "Kiro Q (Anthropic)",
+        "haiku",
+        0.2,
+        "Быстрая и дешёвая.",
+        ["Скорость", "Низкая стоимость"],
+    ),
 ]
 MODELS = (_Q_MODELS if KIRO_API_KEY else []) + _KR_MODELS
 MODEL_IDS = {m["id"] for m in MODELS}
@@ -81,6 +131,7 @@ async def models():
 
 
 import secrets as _secrets
+
 # Token used by the agent's `webchat_restart` tool to restart the service.
 # Generated once at process start; agent reads it from /host/webchat/.restart_token.
 _RESTART_TOKEN = _secrets.token_urlsafe(24)
@@ -108,10 +159,13 @@ async def admin_restart(token: str = ""):
         print(f"[admin/restart] cancel sweep failed: {e}")
     # Schedule a delayed restart so we can return 200 first and let the SSE
     # cancellation events propagate to the client.
-    import asyncio, subprocess
+    import asyncio
+    import subprocess
+
     async def _later():
         await asyncio.sleep(1.5)
         subprocess.Popen(["sudo", "systemctl", "restart", "webchat"])
+
     asyncio.create_task(_later())
     return {"ok": True, "scheduled": True, "cancelled": cancelled}
 
@@ -124,18 +178,21 @@ async def skills_list():
 @app.get("/agent/hooks")
 async def hooks_endpoint():
     import agent_hooks
+
     return {"status": agent_hooks.hooks_status(), "hooks": agent_hooks.list_hooks()}
 
 
 @app.get("/agent/memory")
 async def memory_status():
     import agent_memory
+
     return agent_memory.memory.status()
 
 
 @app.get("/agent/memory/search")
 async def memory_search_endpoint(q: str, k: int = 5):
     import agent_memory
+
     return {"query": q, "hits": agent_memory.memory.search(q, k=k)}
 
 
@@ -171,6 +228,7 @@ async def skill_get(name: str):
 @app.get("/agent/plan/{sid}")
 async def agent_plan_get(sid: str):
     import agent_store
+
     p = agent_store.get_meta(sid, "plan", {"items": []})
     return p if isinstance(p, dict) else {"items": []}
 
@@ -178,12 +236,14 @@ async def agent_plan_get(sid: str):
 @app.get("/agent/actions")
 async def agent_actions(sid: str | None = None, limit: int = 200):
     import agent_store
+
     return {"actions": agent_store.list_actions(sid=sid, limit=limit)}
 
 
 @app.get("/agent/actions/{aid}")
 async def agent_action_get(aid: int):
     import agent_store
+
     a = agent_store.get_action(aid)
     if not a:
         raise HTTPException(status_code=404)
@@ -192,24 +252,26 @@ async def agent_action_get(aid: int):
 
 @app.post("/agent/actions/{aid}/rollback")
 async def agent_action_rollback(aid: int):
-    import agent_store, shutil
+    import shutil
+
+    import agent_store
+
     a = agent_store.get_action(aid)
     if not a:
         raise HTTPException(status_code=404, detail="action not found")
-    bak = a.get("backup"); f = a.get("file")
+    bak = a.get("backup")
+    f = a.get("file")
     if not bak or not f:
         raise HTTPException(status_code=400, detail="no backup recorded")
     if not os.path.exists(bak):
         raise HTTPException(status_code=404, detail=f"backup missing: {bak}")
     # Save current as a fresh backup then restore
     if os.path.exists(f):
-        ts = int(__import__('time').time())
+        ts = int(__import__("time").time())
         shutil.copy2(f, f + f".pre_rollback.{ts}")
     shutil.copy2(bak, f)
     try:
-        agent_store.log_action(a.get("sid") or "", "_rollback",
-                               {"action_id": aid, "file": f, "from": bak},
-                               ok=True)
+        agent_store.log_action(a.get("sid") or "", "_rollback", {"action_id": aid, "file": f, "from": bak}, ok=True)
     except Exception:
         pass
     return {"ok": True, "restored": f, "from": bak}
@@ -235,7 +297,7 @@ def _sse(data: dict | str) -> bytes:
 
 def _chunk(model: str, delta: str | None = None, finish: str | None = None) -> bytes:
     obj = {
-        "id": f"chatcmpl-{int(time.time()*1000)}",
+        "id": f"chatcmpl-{int(time.time() * 1000)}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": model,
@@ -274,8 +336,7 @@ def _extract_text_and_images(content: Any) -> tuple[str, list[dict]]:
                         fmt = "jpeg"
                     if fmt not in ("png", "jpeg", "gif", "webp"):
                         fmt = "png"
-                    images.append({"format": fmt,
-                                   "source": {"bytes": b64}})
+                    images.append({"format": fmt, "source": {"bytes": b64}})
                 except Exception:
                     pass
     return "\n".join(texts), images
@@ -294,7 +355,7 @@ def _convert_messages_to_q(msgs: list[dict[str, Any]]) -> tuple[dict, list, list
         c = m.get("content")
         text, imgs = _extract_text_and_images(c) if c is not None else ("", [])
         if role == "system":
-            sys_text += (text + "\n")
+            sys_text += text + "\n"
         elif role == "user":
             cur_user = text
             last_images = imgs  # overwrite — only the last user turn carries images
@@ -334,8 +395,8 @@ def _parse_eventstream(buf: bytearray):
             return out
         msg = bytes(buf[:total_len])
         del buf[:total_len]
-        headers = msg[12:12 + headers_len]
-        payload = msg[12 + headers_len:total_len - 4]
+        headers = msg[12 : 12 + headers_len]
+        payload = msg[12 + headers_len : total_len - 4]
         out.append((headers, payload))
     return out
 
@@ -345,12 +406,17 @@ def _es_event_type(headers: bytes) -> str:
     i = 0
     et = ""
     while i < len(headers):
-        nlen = headers[i]; i += 1
-        name = headers[i:i + nlen].decode("utf-8", "replace"); i += nlen
-        htype = headers[i]; i += 1
+        nlen = headers[i]
+        i += 1
+        name = headers[i : i + nlen].decode("utf-8", "replace")
+        i += nlen
+        htype = headers[i]
+        i += 1
         if htype == 7:  # string
-            vlen = struct.unpack(">H", headers[i:i + 2])[0]; i += 2
-            val = headers[i:i + vlen].decode("utf-8", "replace"); i += vlen
+            vlen = struct.unpack(">H", headers[i : i + 2])[0]
+            i += 2
+            val = headers[i : i + vlen].decode("utf-8", "replace")
+            i += vlen
             if name == ":event-type":
                 et = val
         else:
@@ -404,7 +470,14 @@ async def stream_q(model_id: str, msgs: list):
                                     yield _chunk(label, delta=txt)
                             except Exception:
                                 pass
-                        elif et in ("toolUseEvent", "codeReferenceEvent", "messageMetadataEvent", "initial-response", "", "followupPromptEvent"):
+                        elif et in (
+                            "toolUseEvent",
+                            "codeReferenceEvent",
+                            "messageMetadataEvent",
+                            "initial-response",
+                            "",
+                            "followupPromptEvent",
+                        ):
                             continue
         yield _chunk(label, finish="stop")
         yield b"data: [DONE]\n\n"
@@ -448,8 +521,10 @@ async def chat(req: ChatRequest):
     return StreamingResponse(stream_omni(model, msgs), media_type="text/event-stream")
 
 
-import agent_store
 import shutil as _shutil
+
+import agent_store
+
 agent_store.init()
 
 KIRA_SESSION_TTL_DAYS = int(os.environ.get("KIRA_SESSION_TTL_DAYS", "30"))
@@ -472,9 +547,10 @@ async def _cleanup_on_start():
     except Exception as e:
         print(f"[agent_store] cleanup failed: {e}")
 
+
 # Cost limits (override via env / systemd unit).
 KIRA_SESSION_LIMIT = float(os.environ.get("KIRA_SESSION_LIMIT", "5"))
-KIRA_DAILY_LIMIT   = float(os.environ.get("KIRA_DAILY_LIMIT",   "30"))
+KIRA_DAILY_LIMIT = float(os.environ.get("KIRA_DAILY_LIMIT", "30"))
 KIRA_MONTHLY_LIMIT = float(os.environ.get("KIRA_MONTHLY_LIMIT", "800"))
 
 
@@ -483,14 +559,11 @@ def _cost_limit_check(sid: str, current_turn_credits: float):
     day_total = agent_store.get_today_credits() + current_turn_credits
     month_total = agent_store.get_month_credits() + current_turn_credits
     if KIRA_SESSION_LIMIT > 0 and sess_total >= KIRA_SESSION_LIMIT:
-        return (f"Лимит сессии исчерпан: {sess_total:.2f} / "
-                f"{KIRA_SESSION_LIMIT:.2f} credits. Начните новую сессию.")
+        return f"Лимит сессии исчерпан: {sess_total:.2f} / {KIRA_SESSION_LIMIT:.2f} credits. Начните новую сессию."
     if KIRA_DAILY_LIMIT > 0 and day_total >= KIRA_DAILY_LIMIT:
-        return (f"Дневной лимит исчерпан: {day_total:.2f} / "
-                f"{KIRA_DAILY_LIMIT:.2f} credits. Попробуйте завтра.")
+        return f"Дневной лимит исчерпан: {day_total:.2f} / {KIRA_DAILY_LIMIT:.2f} credits. Попробуйте завтра."
     if KIRA_MONTHLY_LIMIT > 0 and month_total >= KIRA_MONTHLY_LIMIT:
-        return (f"Месячный лимит исчерпан: {month_total:.2f} / "
-                f"{KIRA_MONTHLY_LIMIT:.2f} credits.")
+        return f"Месячный лимит исчерпан: {month_total:.2f} / {KIRA_MONTHLY_LIMIT:.2f} credits."
     return None
 
 
@@ -517,10 +590,12 @@ async def agent_endpoint(req: AgentRequest):
     # Pre-flight cost check so we don't even open the stream.
     pre_err = _cost_limit_check(sid, 0.0)
     if pre_err:
+
         async def err_gen():
-            yield ('data: ' + json.dumps({"type": "meta", "session_id": sid, "model": model}) + '\n\n').encode()
-            yield ('data: ' + json.dumps({"type": "error", "message": pre_err}) + '\n\n').encode()
-            yield ('data: ' + json.dumps({"type": "done"}) + '\n\n').encode()
+            yield ("data: " + json.dumps({"type": "meta", "session_id": sid, "model": model}) + "\n\n").encode()
+            yield ("data: " + json.dumps({"type": "error", "message": pre_err}) + "\n\n").encode()
+            yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
+
         return StreamingResponse(err_gen(), media_type="text/event-stream")
 
     async def gen():
@@ -538,14 +613,13 @@ async def agent_endpoint(req: AgentRequest):
                 b64 = im.get("data_base64") or im.get("data") or ""
                 if not b64:
                     continue
-                agent_images.append({"format": fmt,
-                                     "source": {"bytes": b64}})
-        async for ev in agent_runtime.run_agent(key_pool.current() or KIRO_API_KEY, req.prompt, model,
-                                                session_id=sid, history=hist,
-                                                images=agent_images):
+                agent_images.append({"format": fmt, "source": {"bytes": b64}})
+        async for ev in agent_runtime.run_agent(
+            key_pool.current() or KIRO_API_KEY, req.prompt, model, session_id=sid, history=hist, images=agent_images
+        ):
             try:
-                if ev.startswith(b'data: '):
-                    obj = json.loads(ev[6:].decode('utf-8', 'replace').strip())
+                if ev.startswith(b"data: "):
+                    obj = json.loads(ev[6:].decode("utf-8", "replace").strip())
                     if obj.get("type") == "stats" and "credits" in obj:
                         last_credits = float(obj["credits"])
                         # persist immediately so /agent/limits sees fresh value
@@ -579,14 +653,16 @@ async def agent_sessions_list():
 @app.get("/agent/limits")
 async def agent_limits(session_id: str | None = None):
     sess = agent_store.get_session_credits(session_id) if session_id else 0.0
-    return JSONResponse({
-        "session_credits": round(sess, 4),
-        "session_limit": KIRA_SESSION_LIMIT,
-        "day_credits": round(agent_store.get_today_credits(), 4),
-        "day_limit": KIRA_DAILY_LIMIT,
-        "month_credits": round(agent_store.get_month_credits(), 4),
-        "month_limit": KIRA_MONTHLY_LIMIT,
-    })
+    return JSONResponse(
+        {
+            "session_credits": round(sess, 4),
+            "session_limit": KIRA_SESSION_LIMIT,
+            "day_credits": round(agent_store.get_today_credits(), 4),
+            "day_limit": KIRA_DAILY_LIMIT,
+            "month_credits": round(agent_store.get_month_credits(), 4),
+            "month_limit": KIRA_MONTHLY_LIMIT,
+        }
+    )
 
 
 @app.get("/agent/sessions/{sid}")
@@ -604,7 +680,7 @@ async def agent_session_get(sid: str):
     tool_results: dict[str, dict] = {}
     for m in hist:
         ctx = (m.get("userInputMessage") or {}).get("userInputMessageContext") or {}
-        for tr in (ctx.get("toolResults") or []):
+        for tr in ctx.get("toolResults") or []:
             tid = tr.get("toolUseId")
             if not tid:
                 continue
@@ -636,7 +712,7 @@ async def agent_session_get(sid: str):
             txt = arm.get("content", "")
             if txt:
                 transcript.append({"role": "assistant", "text": txt})
-            for tu in (arm.get("toolUses") or []):
+            for tu in arm.get("toolUses") or []:
                 tid = tu.get("toolUseId")
                 res = tool_results.get(tid, {})
                 entry = {
@@ -655,8 +731,10 @@ async def agent_session_get(sid: str):
                 # Special-case: split subagent blocks back into structured items
                 if entry["name"] == "use_subagent" and isinstance(entry.get("output"), str):
                     import re
-                    blocks = re.split(r"^=== Subagent #(\d+) \[(success|error)\] ===\s*\n",
-                                      entry["output"], flags=re.MULTILINE)
+
+                    blocks = re.split(
+                        r"^=== Subagent #(\d+) \[(success|error)\] ===\s*\n", entry["output"], flags=re.MULTILINE
+                    )
                     # blocks: ['', '1', 'success', '<rest1>', '2', 'success', '<rest2>', ...]
                     items = []
                     for i in range(1, len(blocks), 3):
@@ -666,18 +744,16 @@ async def agent_session_get(sid: str):
                         q = ""
                         if body.startswith("query:"):
                             line, _, rest = body.partition("\n")
-                            q = line[len("query:"):].strip()
+                            q = line[len("query:") :].strip()
                             body = rest.strip()
-                        items.append({"index": idx, "status": status,
-                                       "query": q, "preview": body[:300]})
+                        items.append({"index": idx, "status": status, "query": q, "preview": body[:300]})
                     if items:
                         entry["subagents"] = items
                 transcript.append(entry)
     plan = agent_store.get_meta(sid, "plan", {"items": []})
     if not isinstance(plan, dict):
         plan = {"items": []}
-    return JSONResponse({"sid": sid, "transcript": transcript,
-                         "model": sess_model, "plan": plan})
+    return JSONResponse({"sid": sid, "transcript": transcript, "model": sess_model, "plan": plan})
 
 
 class RenameRequest(BaseModel):
@@ -694,7 +770,9 @@ async def agent_session_rename(sid: str, req: RenameRequest):
 async def agent_session_delete(sid: str):
     _AGENT_SESSIONS.pop(sid, None)
     ok = agent_store.delete_session(sid)
-    import shutil, os
+    import os
+    import shutil
+
     base = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces", sid))
     root = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces"))
     if base.startswith(root + os.sep) and os.path.isdir(base):
@@ -708,6 +786,7 @@ async def agent_session_delete(sid: str):
 @app.get("/agent/file/{session_id}/{path:path}")
 async def agent_file(session_id: str, path: str):
     import os
+
     base = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces", session_id))
     target = os.path.realpath(os.path.join(base, path))
     if not target.startswith(base + os.sep) and target != base:
@@ -719,7 +798,9 @@ async def agent_file(session_id: str, path: str):
 
 @app.post("/agent/upload/{sid}")
 async def agent_upload(sid: str, files: list[UploadFile] = File(...)):
-    import os, re
+    import os
+    import re
+
     base = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces", sid))
     root = os.path.realpath(os.path.join(os.path.dirname(__file__), "workspaces"))
     if not base.startswith(root + os.sep):

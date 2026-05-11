@@ -1,4 +1,5 @@
 import asyncio
+
 import pytest
 
 import agent_critic
@@ -39,8 +40,8 @@ async def test_review_diff_empty_short_circuits():
 @pytest.mark.asyncio
 async def test_review_diff_mocked_block(monkeypatch):
     async def fake_stream(api_key, body, **kw):
-        yield ("assistantResponseEvent",
-               {"content": "VERDICT: BLOCK\nREASON: looks bad\nISSUES:\n- nope"})
+        yield ("assistantResponseEvent", {"content": "VERDICT: BLOCK\nREASON: looks bad\nISSUES:\n- nope"})
+
     monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
     v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+secret\n", intent="add stuff")
     assert v["verdict"] == "BLOCK"
@@ -52,6 +53,7 @@ async def test_review_diff_mocked_block(monkeypatch):
 async def test_review_diff_mocked_ok(monkeypatch):
     async def fake_stream(api_key, body, **kw):
         yield ("assistantResponseEvent", {"content": "VERDICT: OK"})
+
     monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
     v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+ok\n")
     assert v["verdict"] == "OK"
@@ -60,9 +62,11 @@ async def test_review_diff_mocked_ok(monkeypatch):
 @pytest.mark.asyncio
 async def test_review_diff_truncates(monkeypatch):
     seen = {}
+
     async def fake_stream(api_key, body, **kw):
         seen["user"] = body["conversationState"]["currentMessage"]["userInputMessage"]["content"]
         yield ("assistantResponseEvent", {"content": "VERDICT: OK"})
+
     monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
     huge = "+" + "a" * 200_000
     await agent_critic.review_diff("key", huge)
@@ -74,6 +78,7 @@ async def test_review_diff_handles_exception(monkeypatch):
     async def fake_stream(api_key, body, **kw):
         raise RuntimeError("q down")
         yield None  # pragma: no cover
+
     monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
     v = await agent_critic.review_diff("key", "diff")
     assert v["verdict"] == "OK"

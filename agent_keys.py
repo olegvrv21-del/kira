@@ -17,12 +17,12 @@ Usage:
 If all keys are exhausted, current() falls back to the primary (so the caller
 still gets a string and the upstream returns its own 401, surfaced to the user).
 """
+
 from __future__ import annotations
 
 import os
 import threading
 import time
-from typing import Iterable
 
 _BAN_SECONDS = int(os.environ.get("KIRA_KEY_BAN_SECONDS", "3600"))
 
@@ -54,8 +54,7 @@ class KeyPool:
         # key -> {banned_until: float|None, last_error: str, rotations: int}
         self._state: dict[str, dict] = {}
         for k in self._pool:
-            self._state.setdefault(k, {"banned_until": 0.0, "last_error": "",
-                                        "used": 0, "failed": 0})
+            self._state.setdefault(k, {"banned_until": 0.0, "last_error": "", "used": 0, "failed": 0})
         self._idx = 0
         self._rotations = 0
 
@@ -66,9 +65,7 @@ class KeyPool:
         with self._lock:
             new = _load_pool()
             for k in new:
-                self._state.setdefault(k, {"banned_until": 0.0,
-                                            "last_error": "",
-                                            "used": 0, "failed": 0})
+                self._state.setdefault(k, {"banned_until": 0.0, "last_error": "", "used": 0, "failed": 0})
             self._pool = new
             if self._idx >= len(self._pool):
                 self._idx = 0
@@ -94,8 +91,7 @@ class KeyPool:
         # All banned — return the one with earliest unban time, but don't reset.
         return min(self._pool, key=lambda k: self._state[k]["banned_until"] or 0)
 
-    def mark_bad(self, key: str, *, reason: str = "",
-                 ban_seconds: int | None = None) -> str | None:
+    def mark_bad(self, key: str, *, reason: str = "", ban_seconds: int | None = None) -> str | None:
         """Ban this key and rotate to the next. Returns the new current key."""
         with self._lock:
             if key not in self._state:
@@ -122,18 +118,18 @@ class KeyPool:
             for k in self._pool:
                 st = self._state[k]
                 ban = st["banned_until"] or 0
-                keys.append({
-                    "key_suffix": (k[-6:] if len(k) > 6 else k),
-                    "current": (k == self._pool[self._idx]) if self._pool else False,
-                    "banned": ban > now,
-                    "banned_for_seconds": max(0, int(ban - now)),
-                    "last_error": st["last_error"],
-                    "used": st["used"],
-                    "failed": st["failed"],
-                })
-            return {"pool_size": len(self._pool),
-                    "rotations": self._rotations,
-                    "keys": keys}
+                keys.append(
+                    {
+                        "key_suffix": (k[-6:] if len(k) > 6 else k),
+                        "current": (k == self._pool[self._idx]) if self._pool else False,
+                        "banned": ban > now,
+                        "banned_for_seconds": max(0, int(ban - now)),
+                        "last_error": st["last_error"],
+                        "used": st["used"],
+                        "failed": st["failed"],
+                    }
+                )
+            return {"pool_size": len(self._pool), "rotations": self._rotations, "keys": keys}
 
 
 key_pool = KeyPool()

@@ -11,6 +11,7 @@ Each file looks like:
 The agent gets the list (name + description) injected into its system prompt.
 It calls load_skill({"name": "my-skill"}) to read the full body when needed.
 """
+
 from __future__ import annotations
 
 import re
@@ -82,7 +83,7 @@ def render_skills_section() -> str:
         lines.append("<skill>")
         lines.append(f"<name>{s['name']}</name>")
         lines.append(f"<description>{s['description']}</description>")
-        lines.append("<activate>load_skill name=\"" + s["name"] + "\"</activate>")
+        lines.append('<activate>load_skill name="' + s["name"] + '"</activate>')
         lines.append("</skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)

@@ -1,10 +1,10 @@
 """plan tool: handler and round-trip via store."""
+
 import agent_runtime
 
 
 def test_plan_set(store):
-    status, msg = agent_runtime._handle_plan(
-        "pl1", {"op": "set", "items": ["step a", "step b"]})
+    status, msg = agent_runtime._handle_plan("pl1", {"op": "set", "items": ["step a", "step b"]})
     assert status == "success"
     p = agent_runtime._load_plan("pl1")
     assert [i["text"] for i in p["items"]] == ["step a", "step b"]
@@ -13,8 +13,7 @@ def test_plan_set(store):
 
 def test_plan_update(store):
     agent_runtime._handle_plan("pl2", {"op": "set", "items": ["a", "b"]})
-    status, _ = agent_runtime._handle_plan(
-        "pl2", {"op": "update", "index": 0, "status": "done"})
+    status, _ = agent_runtime._handle_plan("pl2", {"op": "update", "index": 0, "status": "done"})
     assert status == "success"
     p = agent_runtime._load_plan("pl2")
     assert p["items"][0]["status"] == "done"
@@ -23,8 +22,7 @@ def test_plan_update(store):
 
 def test_plan_update_invalid_index(store):
     agent_runtime._handle_plan("pl3", {"op": "set", "items": ["only"]})
-    status, msg = agent_runtime._handle_plan(
-        "pl3", {"op": "update", "index": 9, "status": "done"})
+    status, msg = agent_runtime._handle_plan("pl3", {"op": "update", "index": 9, "status": "done"})
     assert status == "error" and "invalid index" in msg
 
 

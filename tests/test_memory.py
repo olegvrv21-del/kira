@@ -10,14 +10,17 @@ def mem(tmp_path, monkeypatch):
     nb.mkdir()
     (nb / "STATUS.md").write_text(
         "# Status\n\nWebchat service runs on port 3000.\n\n"
-        "## Backups\nDaily systemd timer at 04:17 UTC. Keeps 14 days.\n")
+        "## Backups\nDaily systemd timer at 04:17 UTC. Keeps 14 days.\n"
+    )
     (nb / "WEBCHAT.md").write_text(
         "# Webchat\n\n## Sandbox\nDocker image kira-sandbox:latest.\n\n"
-        "## Notes\nPyright runs on port 9001 inside container.\n")
+        "## Notes\nPyright runs on port 9001 inside container.\n"
+    )
     (nb / "SECRETS.md").write_text("# Secrets\nksk_token=zzzz\n")
     monkeypatch.setenv("KIRA_NOTEBOOK_DIR", str(nb))
     monkeypatch.setenv("KIRA_MEMORY_EXCLUDE", "SECRETS*.md")
     import agent_memory
+
     importlib.reload(agent_memory)
     return agent_memory.memory
 
@@ -47,8 +50,7 @@ def test_search_no_secret_leak(mem):
 
 def test_add_appends_and_rebuilds(mem, tmp_path):
     before = mem.status()["chunks"]
-    info = mem.add("Discovered that pyright caps at 6s for first indexing.",
-                    file="MEMORY.md")
+    info = mem.add("Discovered that pyright caps at 6s for first indexing.", file="MEMORY.md")
     assert info["file"] == "MEMORY.md"
     assert (Path(mem.status()["root"]) / "MEMORY.md").exists()
     after = mem.status()["chunks"]
@@ -69,7 +71,9 @@ def test_add_rejects_path_traversal(mem):
 def test_rebuild_on_mtime_change(mem, tmp_path):
     root = Path(mem.status()["root"])
     chunks_before = mem.status()["chunks"]
-    import time; time.sleep(0.05)
+    import time
+
+    time.sleep(0.05)
     (root / "NEW.md").write_text("# New\n\nThis is a brand new doc about widgets.\n")
     s = mem.status()  # ensure() rebuilds
     assert s["chunks"] > chunks_before
