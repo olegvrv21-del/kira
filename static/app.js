@@ -1,3 +1,46 @@
+    /* ---- auth token: install fetch wrapper so all requests carry Bearer ---- */
+    (function installAuthFetch(){
+      const KEY = 'kira_auth_token';
+      const getTok = () => { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } };
+      // Expose so a console / settings UI can update.
+      window.kiraAuth = {
+        get: getTok,
+        set: (t) => { try { localStorage.setItem(KEY, t || ''); } catch(_){} },
+        clear: () => { try { localStorage.removeItem(KEY); } catch(_){} },
+        prompt: () => {
+          const cur = getTok();
+          const v = window.prompt('Kira auth token (empty to clear):', cur);
+          if (v === null) return cur;
+          window.kiraAuth.set(v.trim());
+          return v.trim();
+        },
+      };
+      const origFetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        const tok = getTok();
+        if (!tok) return origFetch(input, init);
+        // Only inject for same-origin (relative URLs or matching host).
+        let url = input;
+        try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch(_) {}
+        const sameOrigin = (typeof url === 'string') && (url.startsWith('/') ||
+          (url.startsWith(location.origin)) || (!url.includes('://')));
+        if (!sameOrigin) return origFetch(input, init);
+        const opts = Object.assign({}, init || {});
+        const headers = new Headers(opts.headers || (typeof input === 'object' && input ? input.headers : undefined) || {});
+        if (!headers.has('authorization')) headers.set('authorization', 'Bearer ' + tok);
+        opts.headers = headers;
+        return origFetch(input, opts).then((r) => {
+          if (r && r.status === 401) {
+            console.warn('[kira] 401: token rejected for', url);
+          }
+          return r;
+        });
+      };
+      // EventSource doesn't support custom headers; append token as query param.
+      // Server can be extended later to accept ?token=. For now, /chat & SSE use
+      // fetch streaming, so we're fine.
+    })();
+
     /* i18n */
     const I18N = {
       ru: {

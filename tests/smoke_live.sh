@@ -2,10 +2,16 @@
 # Live smoke test against running webchat. Run AFTER `systemctl restart`.
 set -eu
 BASE="${BASE:-http://localhost:3000}"
+AUTH_HDR=()
+if [ -n "${KIRA_AUTH_TOKEN:-}" ]; then
+  # CSV → first token
+  TOK="${KIRA_AUTH_TOKEN%%,*}"
+  AUTH_HDR=(-H "Authorization: Bearer $TOK")
+fi
 fail=0
 check() {
   local name="$1" url="$2" pattern="$3"
-  body=$(curl -fsS "$BASE$url" || { echo "FAIL $name: HTTP"; return 1; })
+  body=$(curl -fsS "${AUTH_HDR[@]}" "$BASE$url" || { echo "FAIL $name: HTTP"; return 1; })
   if echo "$body" | grep -q "$pattern"; then
     echo "OK   $name"
   else
