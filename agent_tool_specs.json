@@ -1,0 +1,1061 @@
+[
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "description": "Bash command to execute",
+              "type": "string"
+            },
+            "working_dir": {
+              "type": "string",
+              "description": "Working directory for command execution. Supports tilde expansion (e.g., ~/projects). If not specified, uses the current working directory."
+            },
+            "summary": {
+              "type": "string",
+              "description": "A brief explanation of what the command does"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "name": "execute_bash",
+      "description": "Execute the specified bash command. NEVER prefix commands with cd to change the working directory, use the `working_dir` argument instead."
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "operations"
+          ],
+          "properties": {
+            "summary": {
+              "description": "Optional description of the purpose of this batch operation (mainly useful for multiple operations)",
+              "type": "string"
+            },
+            "operations": {
+              "description": "Array of operations to execute. Provide one element for single operation, multiple for batch.",
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "start_line": {
+                    "default": 1,
+                    "type": "integer",
+                    "description": "Starting line number (optional, for Line mode). A negative index represents a line number starting from the end of the file."
+                  },
+                  "mode": {
+                    "enum": [
+                      "Line",
+                      "Directory",
+                      "Search",
+                      "Image"
+                    ],
+                    "description": "The operation mode to run in: `Line`, `Directory`, `Search`. `Line` and `Search` are only for text files, and `Directory` is only for directories. `Image` is for image files, in this mode `image_paths` is required.",
+                    "type": "string"
+                  },
+                  "pattern": {
+                    "description": "Pattern to search for (required, for Search mode). Case insensitive. The pattern matching is performed per line.",
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "type": "integer",
+                    "default": 2,
+                    "description": "Number of context lines around search results (optional, for Search mode)"
+                  },
+                  "depth": {
+                    "type": "integer",
+                    "description": "Depth of a recursive directory listing (optional, for Directory mode)",
+                    "default": 0
+                  },
+                  "exclude_patterns": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns to exclude from directory listing (optional, for Directory mode). If omitted, uses defaults. If empty array [] is provided, no exclusions are applied (shows everything). If patterns are provided, they completely override the defaults. Examples: '**/target/**', '*.log'",
+                    "default": [
+                      "node_modules",
+                      ".git",
+                      "dist",
+                      "build",
+                      "out",
+                      ".cache",
+                      "target"
+                    ]
+                  },
+                  "end_line": {
+                    "description": "Ending line number (optional, for Line mode). A negative index represents a line number starting from the end of the file.",
+                    "type": "integer",
+                    "default": -1
+                  },
+                  "max_entries": {
+                    "type": "integer",
+                    "description": "Maximum number of entries to return (optional, for Directory mode). When limit is reached, results are truncated and metadata shows 'showing X of Y entries'. Use to prevent context window overflow. Default: 1000",
+                    "default": 1000
+                  },
+                  "image_paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "List of paths to the images. This is currently supported by the Image mode."
+                  },
+                  "offset": {
+                    "default": 0,
+                    "type": "integer",
+                    "description": "Number of entries to skip for pagination (optional, for Directory mode). Use with max_entries to iterate through large directories. Entries are sorted by last modified time (most recent first). Default: 0"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Path to the file or directory. The path should be absolute, or otherwise start with ~ for the user's home (required for Line, Directory, Search modes)."
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "name": "fs_read",
+      "description": "Tool for reading files, directories and images. Always provide an 'operations' array.\n\nFor single operation: provide array with one element.\nFor batch operations: provide array with multiple elements.\n\nAvailable modes:\n- Line: Read lines from a file\n- Directory: List directory contents\n- Search: Search for patterns in files\n- Image: Read and process images\n\nExamples:\n1. Single: {\"operations\": [{\"mode\": \"Line\", \"path\": \"/file.txt\"}]}\n2. Batch: {\"operations\": [{\"mode\": \"Line\", \"path\": \"/file1.txt\"}, {\"mode\": \"Search\", \"path\": \"/file2.txt\", \"pattern\": \"test\"}]}"
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "required": [
+            "command",
+            "path"
+          ],
+          "type": "object",
+          "properties": {
+            "file_text": {
+              "description": "Required parameter of `create` command, with the content of the file to be created.",
+              "type": "string"
+            },
+            "old_str": {
+              "description": "Required parameter of `str_replace` command containing the string in `path` to replace.",
+              "type": "string"
+            },
+            "path": {
+              "description": "Absolute path to file or directory, e.g. `/repo/file.py` or `/repo`.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "A brief explanation of what the file change does or why it's being made.",
+              "type": "string"
+            },
+            "insert_line": {
+              "description": "Required parameter of `insert` command. The `new_str` will be inserted AFTER the line `insert_line` of `path`.",
+              "type": "integer"
+            },
+            "new_str": {
+              "type": "string",
+              "description": "Required parameter of `str_replace` command containing the new string. Required parameter of `insert` command containing the string to insert. Required parameter of `append` command containing the content to append to the file."
+            },
+            "command": {
+              "type": "string",
+              "enum": [
+                "create",
+                "str_replace",
+                "insert",
+                "append"
+              ],
+              "description": "The commands to run. Allowed options are: `create`, `str_replace`, `insert`, `append`."
+            }
+          }
+        }
+      },
+      "name": "fs_write",
+      "description": "A tool for creating and editing files\n * The `create` command will override the file at `path` if it already exists as a file, and otherwise create a new file\n * The `append` command will add content to the end of an existing file, automatically adding a newline if the file doesn't end with one. The file must exist.\n Notes for using the `str_replace` command:\n * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!\n * If the `old_str` parameter is not unique in the file, the replacement will not be performed. Make sure to include enough context in `old_str` to make it unique\n * The `new_str` parameter should contain the edited lines that should replace the `old_str`."
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "pattern"
+          ],
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "description": "Maximum files to return. If totalFiles exceeds this, truncated will be true."
+            },
+            "pattern": {
+              "description": "Glob pattern, e.g. '**/*.rs', 'src/**/*.{ts,tsx}' or '**/test*'.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "Root directory to search from. Only set this when the user explicitly mentions a directory path. In all other cases, omit this so the tool searches from the current working directory (the project root)."
+            },
+            "max_depth": {
+              "type": "integer",
+              "description": "Maximum directory depth to traverse. Increase for deep nested structures."
+            }
+          }
+        }
+      },
+      "name": "glob",
+      "description": "Find files and directories whose paths match a glob pattern. Respects .gitignore. Prefer this over the bash 'find' command for listing or discovering paths. Returns JSON with totalFiles (count found), truncated (true if limited), and filePaths array. When truncated is true, just mention results are truncated, don't state the limit number."
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "pattern"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Directory to search from. Defaults to current working directory."
+            },
+            "case_sensitive": {
+              "type": "boolean",
+              "description": "Case-sensitive search. Defaults to false (case-insensitive)."
+            },
+            "max_matches_per_file": {
+              "type": "integer",
+              "description": "Max matches returned per file (output limit). Increase to see all occurrences in a file."
+            },
+            "pattern": {
+              "description": "Regex pattern to search for. Examples: 'fn main', 'class.*Component', 'TODO|FIXME'. Start with simple patterns first (e.g. just the word you're looking for), then refine if needed.",
+              "type": "string"
+            },
+            "include": {
+              "type": "string",
+              "description": "File filter glob. Examples: '*.rs', '*.{ts,tsx}', '*.py'"
+            },
+            "max_files": {
+              "description": "Max number of files returned (output limit). Increase for comprehensive codebase searches.",
+              "type": "integer"
+            },
+            "output_mode": {
+              "enum": [
+                "content",
+                "files_with_matches",
+                "count"
+              ],
+              "description": "Output format: 'content' returns matches as 'file:line:content' (default, best for seeing actual matches), 'files_with_matches' returns only file paths, 'count' returns match counts per file.",
+              "type": "string"
+            },
+            "max_depth": {
+              "description": "Max directory depth to traverse when searching (search limit). Increase for deeply nested structures.",
+              "type": "integer"
+            },
+            "max_total_lines": {
+              "description": "Max total matched lines returned across all files (output limit). Increase when searching for many occurrences.",
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "name": "grep",
+      "description": "Fast text pattern search in files using regex. ALWAYS use this tool instead of 'grep', 'rg', or 'ag' commands in bash. Respects .gitignore.\n\n## Text Discovery Only\nUse grep for literal text/pattern matching: error messages, TODOs, config values, regex patterns.\n\n## For Semantic Code Understanding → Use 'code' tool if available\n- Finding symbol definitions or usages → code tool (search_symbols, goto_definition, find_references)\n- Understanding code structure/relationships → code tool\n- Distinguishing definition vs call vs import → code tool\n\n## Fallback\nIf the 'code' tool is available but returns insufficient symbol info, use grep to discover candidate files/lines, then return to 'code' for precise navigation.\n\nWhen you use this tool, prefer to show the user a small list of representative matches (including file paths and line numbers) instead of only giving a high-level summary."
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "description": "The commands to run. Allowed options are `ListAgents` to query available agents, or `InvokeSubagents` to invoke one or more subagents",
+              "type": "string",
+              "enum": [
+                "ListAgents",
+                "InvokeSubagents"
+              ]
+            },
+            "content": {
+              "properties": {
+                "subagents": {
+                  "items": {
+                    "required": [
+                      "query"
+                    ],
+                    "type": "object",
+                    "properties": {
+                      "query": {
+                        "type": "string",
+                        "description": "The query or task to be handled by the subagent"
+                      },
+                      "relevant_context": {
+                        "type": "string",
+                        "description": "Optional additional context that should be provided to the subagent to help it understand the task better"
+                      },
+                      "agent_name": {
+                        "description": "Optional name of the specific agent to use. If not provided, uses the default agent",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "type": "array",
+                  "description": "Array of subagent invocations to execute in parallel. Each invocation specifies a query, optional agent name, and optional context."
+                }
+              },
+              "required": [
+                "subagents"
+              ],
+              "description": "Required for `InvokeSubagents` command. Contains subagents array and optional conversation ID.",
+              "type": "object"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "name": "use_subagent",
+      "description": "⚠️ CRITICAL DELEGATION TOOL ⚠️\n\n🔍 BEFORE attempting ANY task, CHECK if you have the required tools in YOUR current tool list.\n\n❌ If you DON'T have the necessary tools → YOU MUST use this tool to delegate to a subagent that does.\n✅ If you DO have the tools → Handle the task yourself.\n\n## When to Use (MANDATORY scenarios):\n\n1. **MISSING TOOLS**: The user asks you to do something but you don't see the required tool in your available tools list\n   - Example: User asks to read a file, but you don't have 'fs_read' → USE THIS TOOL\n   - Example: User asks to search code, but you don't have 'code' tool → USE THIS TOOL\n   - Example: User asks to run bash command, but you don't have 'execute_bash' → USE THIS TOOL\n\n2. **PARALLEL PROCESSING**: A complex task can be split into independent subtasks that different specialized agents can handle simultaneously\n\n3. **CAPABILITY CHECK**: Use ListAgents command first to see what specialized agents and their toolsets are available\n\n## @prompt References in Queries\n\nYou CAN pass `@prompt-name` references (including arguments) directly in the subagent query field. The system automatically resolves @prompt references before the subagent starts — the prompt content is expanded inline and the subagent receives the fully resolved text. Do NOT refuse to delegate because a query contains `@prompt-name` syntax.\n\nExample: `{\"query\": \"@my-task 'arg1:value1, arg2:value2'\"}` — this is valid and will be resolved.\n\n## How Subagents Are Different:\n- Subagents have DIFFERENT, SPECIALIZED toolsets than you\n- Each subagent may have tools you don't have access to\n- They operate independently with their own context\n- Up to 4 subagents can work in parallel\n\n## Decision Flow:\n```\nUser makes request → Check YOUR tools list → Missing required tool? → USE use_subagent\n                                          → Have required tool? → Handle it yourself\n```\n\n⚡ Remember: Don't apologize about lacking tools - just delegate to a subagent that has them! Also note that subagents that are spawned together could not communicate with each other. If they are to perform tasks that are dependent on each other. Spawn them with a different tool call!"
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_navigate",
+      "description": "Navigate the headless Chromium browser to a URL. Page state persists across calls. Returns the final URL, HTTP status, and page title.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "url"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "Absolute URL to load."
+            },
+            "wait_until": {
+              "type": "string",
+              "enum": [
+                "load",
+                "domcontentloaded",
+                "networkidle"
+              ],
+              "description": "When to consider navigation done. Default: domcontentloaded."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_text",
+      "description": "Get the visible text content (document.body.innerText) of the currently loaded page. Use this to read what's on the page after navigating.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_eval",
+      "description": "Evaluate a JavaScript expression in the page context. Useful for reading DOM (e.g. document.querySelector('h1').innerText) or extracting structured data. Expression is wrapped in an async IIFE so you can use await. Return value must be JSON-serializable.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "expression"
+          ],
+          "properties": {
+            "expression": {
+              "type": "string",
+              "description": "JavaScript expression to evaluate. Example: 'document.querySelectorAll(\"a\").length'"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_click",
+      "description": "Click an element matching the given CSS selector. Waits up to 15s for the element to appear.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "selector"
+          ],
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector, e.g. 'button.submit' or 'a[href=\"/login\"]'."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_type",
+      "description": "Fill an input/textarea matching the selector with the given text (replaces existing value).",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "required": [
+            "selector",
+            "text"
+          ],
+          "properties": {
+            "selector": {
+              "type": "string",
+              "description": "CSS selector for the input element."
+            },
+            "text": {
+              "type": "string",
+              "description": "Text to type."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_screenshot",
+      "description": "Take a PNG screenshot of the current viewport and save it to the workspace. Returns the saved path. Use this when you need to show the user what the page looks like.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Output path inside workspace, e.g. '/workspace/shot.png'. Default: /workspace/screenshot.png"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Skill name (matches the 'name' field in the skill file's frontmatter)."
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "name": "load_skill",
+      "description": "Load the full body of a named skill (a reusable playbook). Use BEFORE acting on a task that matches one of the available skills' descriptions. Returns the markdown content of the skill."
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "verify_change",
+      "description": "Validate edits. Use AFTER fs_write or shell edits, and BEFORE telling the user 'done'. Runs: py_compile of given files; HTTP GET of given URLs (expect <400); checks 'absent_in' patterns (must NOT appear), 'present_in' patterns (must appear), and 'shell' commands (must exit 0). Returns header 'VERIFY=OK' or 'VERIFY=FAIL' and per-check lines. If FAIL — fix and re-run.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "py_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Absolute paths to python files to byte-compile."
+            },
+            "http_get": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "URLs to GET (e.g. http://host.docker.internal:3000/healthz)."
+            },
+            "absent_in": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "pattern": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "pattern"
+                ]
+              },
+              "description": "Patterns that must NOT appear in given files (catches broken refs)."
+            },
+            "present_in": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "pattern": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "pattern"
+                ]
+              }
+            },
+            "shell": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Shell commands; non-zero exit = FAIL."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "plan",
+      "description": "Maintain a structured TODO list for the current task. ALWAYS call `plan` with op=set at the start of any multi-step request (≥2 actions). Update items as you progress (`op=update` with status=in_progress / done / skipped). Statuses: pending, in_progress, done, skipped. The user sees the list in the UI. Operations: set (replace all items), update (change one item by index), add (append, optionally after index), clear (empty).",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "set",
+                "update",
+                "add",
+                "clear"
+              ],
+              "description": "Operation. Defaults to 'set'."
+            },
+            "items": {
+              "type": "array",
+              "description": "For op=set: list of step descriptions (strings) or {text,status} objects.",
+              "items": {}
+            },
+            "index": {
+              "type": "integer",
+              "description": "For op=update: 0-based index."
+            },
+            "text": {
+              "type": "string",
+              "description": "For op=update/add."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "in_progress",
+                "done",
+                "skipped"
+              ]
+            },
+            "after": {
+              "type": "integer",
+              "description": "For op=add: insert after this index."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "change_dir",
+      "description": "Change the persistent working directory for this session. Subsequent execute_bash, patch, fs_* calls use it by default. Relative paths are resolved against the current cwd. Returns the new absolute cwd.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute or relative directory."
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "patch",
+      "description": "Multi-operation file editor with named clipboards. Use INSTEAD of fs_write when: (a) you need several edits in one shot, (b) you want to move/copy code via clipboards (use toClipboard on the source, fromClipboard at the destination), or (c) you need to change indentation while moving (reindent: {strip, add}). Operations per patch: 'replace' (oldText must be unique), 'append_eof', 'prepend_bof', 'overwrite' (replaces whole file). Auto-creates .bak.<ts>. Clipboards persist across patch calls in the same session.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "patches": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "replace",
+                      "append_eof",
+                      "prepend_bof",
+                      "overwrite"
+                    ]
+                  },
+                  "oldText": {
+                    "type": "string",
+                    "description": "For 'replace'. Must appear exactly once."
+                  },
+                  "newText": {
+                    "type": "string"
+                  },
+                  "toClipboard": {
+                    "type": "string",
+                    "description": "Save oldText under this clipboard name before the edit."
+                  },
+                  "fromClipboard": {
+                    "type": "string",
+                    "description": "Use clipboard content as newText (overrides newText)."
+                  },
+                  "reindent": {
+                    "type": "object",
+                    "properties": {
+                      "strip": {
+                        "type": "string",
+                        "description": "Prefix to remove from each line of newText."
+                      },
+                      "add": {
+                        "type": "string",
+                        "description": "Prefix to add to each line of newText after stripping."
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "operation"
+                ]
+              }
+            }
+          },
+          "required": [
+            "path",
+            "patches"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "llm_one_shot",
+      "description": "Single-turn LLM call with NO history and NO tools. Use for: summarization, classification, extraction, reformatting, rewriting. Cheaper than spawning a subagent. Default model is claude-haiku-4.5 to keep costs down. Returns the model's full text response.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string",
+              "description": "Model id (e.g. claude-haiku-4.5, claude-sonnet-4.6). Defaults to haiku."
+            },
+            "system": {
+              "type": "string",
+              "description": "Optional system prompt."
+            },
+            "max_tokens": {
+              "type": "integer",
+              "description": "Soft cap on response length (truncated post-hoc)."
+            }
+          },
+          "required": [
+            "prompt"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "output_iframe",
+      "description": "Render an HTML snippet for the user as a sandboxed iframe in the chat. Use to show: charts (Vega-Lite via CDN), SVG diagrams, HTML/CSS demos, interactive widgets. The HTML must be self-contained; external resources via https CDN only. Do NOT use for plain text — write a normal reply instead.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "html": {
+              "type": "string",
+              "description": "Full HTML document, including <html>, <head>, <body>."
+            }
+          },
+          "required": [
+            "html"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "keyword_search",
+      "description": "Locate the most relevant files for a multi-term query, ranked by score. Use INSTEAD of grep when navigating an unfamiliar codebase with vague intent. Heuristics: matches in definition lines (def/class/function) score higher; matches in filenames score higher; files hitting more distinct terms rank higher. Provide MANY SPECIFIC terms ordered by importance.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "search_terms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "Terms in descending order of importance."
+            },
+            "path": {
+              "type": "string",
+              "description": "Root directory. Default: /workspace."
+            },
+            "glob": {
+              "type": "string",
+              "description": "Restrict to e.g. '*.py' or '!*.test.ts'."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Max files to return (default 20)."
+            },
+            "case_sensitive": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "search_terms"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "outline",
+      "description": "Return a compact structural outline (functions/classes/types) of a source file. Supports .py .js .jsx .ts .tsx .go. Use BEFORE editing an unfamiliar file (smaller than fs_read, focused on shape, not content).",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_console_logs",
+      "description": "Read recent browser console messages and uncaught page errors from the sandboxed browser (ring buffer up to 500). Use to debug JS errors after browser_navigate / interactions.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "description": "Max entries (default 100)."
+            },
+            "clear": {
+              "type": "boolean",
+              "description": "Clear the buffer instead of reading."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_network",
+      "description": "Network monitoring for the sandboxed browser. Actions: start (clear+record), stop, clear, log (default).",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "start",
+                "stop",
+                "clear",
+                "log"
+              ],
+              "description": "Default 'log'."
+            },
+            "filter": {
+              "type": "string",
+              "description": "Substring filter on URL when action=log."
+            },
+            "limit": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_accessibility",
+      "description": "Snapshot the accessibility tree of the current page (or a sub-tree by CSS selector via 'root'). Use to inspect interactive structure (roles, names) instead of raw DOM. Cleaner than browser_text for buttons/inputs/links.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "interesting_only": {
+              "type": "boolean",
+              "description": "Default true; false returns full tree."
+            },
+            "root": {
+              "type": "string",
+              "description": "Optional CSS selector to scope the snapshot."
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "browser_emulate",
+      "description": "Emulate device / viewport / color scheme / media. Use to test responsive UI, dark mode, print preview. Devices: 'iPhone 14', 'iPhone SE', 'Pixel 7', 'iPad', 'Desktop', 'Desktop 1080p', 'Desktop 4K'.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "device": {
+              "type": "string"
+            },
+            "width": {
+              "type": "integer"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "device_scale_factor": {
+              "type": "number"
+            },
+            "mobile": {
+              "type": "boolean"
+            },
+            "dark_mode": {
+              "type": "boolean",
+              "description": "Emulate prefers-color-scheme."
+            },
+            "media": {
+              "type": "string",
+              "enum": [
+                "screen",
+                "print"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "git",
+      "description": "Run a git subcommand in the sandbox. ops: status, diff (cached?, stat?, ref?, path?), log (limit, path?), show (ref), blame (file, line_start?, line_end?), add (files), branch, current_branch, checkout (ref, create_new?), stash (sub?, message?), restore (files, staged?), ls_files (modified?), init.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "cached": {
+              "type": "boolean"
+            },
+            "stat": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "file": {
+              "type": "string"
+            },
+            "line_start": {
+              "type": "integer"
+            },
+            "line_end": {
+              "type": "integer"
+            },
+            "files": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "create_new": {
+              "type": "boolean"
+            },
+            "sub": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "staged": {
+              "type": "boolean"
+            },
+            "modified": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "op"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "git_commit",
+      "description": "Stage and commit current changes. By default 'git add -A' is run first (set stage=false to skip). Returns the new short hash on success. Use AFTER finishing a logical unit of work. Imperative message referencing the plan step.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "stage": {
+              "type": "boolean"
+            },
+            "allow_empty": {
+              "type": "boolean"
+            },
+            "author": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "run_tests",
+      "description": "Detect the test runner (pytest/jest/go) and execute it. Returns a parsed summary 'TESTS=PASS|FAIL ... passed=N failed=N duration=Xs' plus raw tail. Prefer this over execute_bash pytest — the structured header is for follow-up decisions.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "runner": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "pytest",
+                "jest",
+                "go"
+              ]
+            },
+            "target": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "extra": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "lint",
+      "description": "Quick syntax/type/style check. .py: ruff if available else py_compile. .js/.jsx/.mjs: node --check. .ts/.tsx: tsc --noEmit if available. Returns 'LINT=OK' or 'LINT=FAIL' plus per-file results.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+]

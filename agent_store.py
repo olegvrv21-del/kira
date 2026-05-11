@@ -1,0 +1,346 @@
+"""SQLite-backed persistence for /agent sessions.
+
+Table schema:
+  sessions(sid TEXT PK, title TEXT, model TEXT, created_at REAL, updated_at REAL)
+  history(sid TEXT, idx INTEGER, msg_json TEXT, PRIMARY KEY (sid, idx))
+
+History entries are the raw Q-protocol turns (the same dicts kept in memory).
+Images embedded as base64 inflate rows; SQLite handles BLOBs of MB size fine.
+"""
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+_USER_MSG_RE = re.compile(r"--- USER MESSAGE BEGIN ---\n?(.*?)--- USER MESSAGE END ---", re.DOTALL)
+
+
+def extract_user_text(content: str) -> str | None:
+    """Pull the actual user prompt out of Kiro's wrapper template."""
+    if not isinstance(content, str):
+        return None
+    m = _USER_MSG_RE.search(content)
+    if m:
+        t = m.group(1).strip()
+        return t or None
+    # Fallback: not wrapped (e.g. very first system-prompt turn) — caller handles.
+    return None
+
+DB_PATH = Path(__file__).parent / "agent_sessions.db"
+
+
+def _conn() -> sqlite3.Connection:
+    c = sqlite3.connect(DB_PATH, isolation_level=None)  # autocommit
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA synchronous=NORMAL")
+    return c
+
+
+def init() -> None:
+    with _conn() as c:
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS sessions(
+                sid TEXT PRIMARY KEY,
+                title TEXT,
+                model TEXT,
+                created_at REAL,
+                updated_at REAL,
+                credits REAL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS history(
+                sid TEXT,
+                idx INTEGER,
+                msg_json TEXT,
+                PRIMARY KEY(sid, idx)
+            );
+            CREATE TABLE IF NOT EXISTS daily_credits(
+                day TEXT PRIMARY KEY,
+                credits REAL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
+            CREATE TABLE IF NOT EXISTS actions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sid TEXT,
+                ts REAL,
+                tool TEXT,
+                args_json TEXT,
+                ok INTEGER,
+                error TEXT,
+                file TEXT,
+                backup TEXT,
+                diff TEXT,
+                tool_use_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_actions_sid_ts ON actions(sid, ts DESC);
+            CREATE INDEX IF NOT EXISTS idx_actions_ts ON actions(ts DESC);
+            CREATE TABLE IF NOT EXISTS session_meta(
+                sid TEXT,
+                key TEXT,
+                value TEXT,
+                updated_at REAL,
+                PRIMARY KEY (sid, key)
+            );
+        """)
+        # add column to old DBs
+        cols = {r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "credits" not in cols:
+            c.execute("ALTER TABLE sessions ADD COLUMN credits REAL DEFAULT 0")
+        acols = {r[1] for r in c.execute("PRAGMA table_info(actions)").fetchall()}
+        if acols:
+            if "diff" not in acols:
+                c.execute("ALTER TABLE actions ADD COLUMN diff TEXT")
+            if "tool_use_id" not in acols:
+                c.execute("ALTER TABLE actions ADD COLUMN tool_use_id TEXT")
+
+
+def _today_key() -> str:
+    import datetime
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _month_key() -> str:
+    import datetime
+    return datetime.datetime.utcnow().strftime("%Y-%m")
+
+
+def get_month_credits() -> float:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT credits FROM daily_credits WHERE day LIKE ?",
+            (_month_key() + "-%",),
+        ).fetchall()
+    return sum(float(r[0]) for r in rows)
+
+
+def record_credits(sid: str, credits_total_for_session: float) -> None:
+    """Set absolute session total; bump daily by the delta."""
+    with _conn() as c:
+        row = c.execute("SELECT credits FROM sessions WHERE sid=?", (sid,)).fetchone()
+        prev = float(row[0]) if row and row[0] is not None else 0.0
+        delta = max(0.0, credits_total_for_session - prev)
+        c.execute(
+            "INSERT INTO sessions(sid, credits, created_at, updated_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(sid) DO UPDATE SET credits=excluded.credits",
+            (sid, credits_total_for_session, time.time(), time.time()),
+        )
+        if delta > 0:
+            day = _today_key()
+            c.execute(
+                "INSERT INTO daily_credits(day, credits) VALUES (?,?) "
+                "ON CONFLICT(day) DO UPDATE SET credits = credits + excluded.credits",
+                (day, delta),
+            )
+
+
+def get_session_credits(sid: str) -> float:
+    with _conn() as c:
+        row = c.execute("SELECT credits FROM sessions WHERE sid=?", (sid,)).fetchone()
+    return float(row[0]) if row and row[0] is not None else 0.0
+
+
+def get_today_credits() -> float:
+    with _conn() as c:
+        row = c.execute("SELECT credits FROM daily_credits WHERE day=?",
+                        (_today_key(),)).fetchone()
+    return float(row[0]) if row else 0.0
+
+
+def load_history(sid: str) -> list[dict] | None:
+    with _conn() as c:
+        row = c.execute("SELECT 1 FROM sessions WHERE sid=?", (sid,)).fetchone()
+        if not row:
+            return None
+        rows = c.execute(
+            "SELECT msg_json FROM history WHERE sid=? ORDER BY idx", (sid,)
+        ).fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def save_session(sid: str, history: list[dict], model: str, title: str | None = None) -> None:
+    now = time.time()
+    with _conn() as c:
+        existing = c.execute("SELECT title, created_at FROM sessions WHERE sid=?", (sid,)).fetchone()
+        if existing:
+            c.execute(
+                "UPDATE sessions SET model=?, updated_at=?, title=COALESCE(?, title) WHERE sid=?",
+                (model, now, title, sid),
+            )
+        else:
+            c.execute(
+                "INSERT INTO sessions(sid, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
+                (sid, title, model, now, now),
+            )
+        # rewrite history (idempotent; histories are short enough)
+        c.execute("DELETE FROM history WHERE sid=?", (sid,))
+        c.executemany(
+            "INSERT INTO history(sid, idx, msg_json) VALUES (?,?,?)",
+            [(sid, i, json.dumps(m, ensure_ascii=False)) for i, m in enumerate(history)],
+        )
+
+
+def list_sessions(limit: int = 100) -> list[dict[str, Any]]:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT s.sid, s.title, s.model, s.created_at, s.updated_at,
+                   (SELECT COUNT(*) FROM history h WHERE h.sid=s.sid) AS n_msgs
+               FROM sessions s ORDER BY s.updated_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    out = []
+    with _conn() as c:
+        for r in rows:
+            cred = c.execute("SELECT credits FROM sessions WHERE sid=?", (r[0],)).fetchone()
+            out.append({
+                "sid": r[0], "title": r[1], "model": r[2],
+                "created_at": r[3], "updated_at": r[4], "n_msgs": r[5],
+                "credits": float(cred[0]) if cred and cred[0] is not None else 0.0,
+            })
+    return out
+
+
+def get_session_model(sid: str) -> str | None:
+    with _conn() as c:
+        row = c.execute("SELECT model FROM sessions WHERE sid=?", (sid,)).fetchone()
+    return row[0] if row else None
+
+
+def rename_session(sid: str, title: str) -> bool:
+    with _conn() as c:
+        cur = c.execute("UPDATE sessions SET title=? WHERE sid=?", (title, sid))
+        return cur.rowcount > 0
+
+
+def delete_session(sid: str) -> bool:
+    with _conn() as c:
+        c.execute("DELETE FROM history WHERE sid=?", (sid,))
+        cur = c.execute("DELETE FROM sessions WHERE sid=?", (sid,))
+        return cur.rowcount > 0
+
+
+def derive_title(history: list[dict]) -> str | None:
+    """First user-typed prompt (skip system prompt + tool-result turns)."""
+    for m in history:
+        uim = m.get("userInputMessage")
+        if not uim:
+            continue
+        ctx = uim.get("userInputMessageContext") or {}
+        if ctx.get("toolResults"):
+            continue
+        txt = extract_user_text(uim.get("content", ""))
+        if txt:
+            return txt.splitlines()[0][:80]
+    return None
+
+
+def cleanup_old_sessions(max_age_days: int) -> list[str]:
+    """Delete sessions whose updated_at is older than N days. Returns deleted sids."""
+    if max_age_days <= 0:
+        return []
+    cutoff = time.time() - max_age_days * 86400
+    with _conn() as c:
+        rows = c.execute("SELECT sid FROM sessions WHERE updated_at < ?", (cutoff,)).fetchall()
+        sids = [r[0] for r in rows]
+        for sid in sids:
+            c.execute("DELETE FROM history WHERE sid=?", (sid,))
+            c.execute("DELETE FROM sessions WHERE sid=?", (sid,))
+    return sids
+
+
+def log_action(sid: str, tool: str, args: dict, ok: bool,
+               error: str | None = None, file: str | None = None,
+               backup: str | None = None, diff: str | None = None,
+               tool_use_id: str | None = None) -> int:
+    try:
+        args_s = json.dumps(args, ensure_ascii=False)[:8000]
+    except Exception:
+        args_s = str(args)[:8000]
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO actions(sid, ts, tool, args_json, ok, error, file, backup, diff, tool_use_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (sid, time.time(), tool, args_s, 1 if ok else 0,
+             (error or "")[:4000], file, backup,
+             (diff or None), tool_use_id),
+        )
+        return int(cur.lastrowid)
+
+
+_ACTION_COLS = "id, sid, ts, tool, args_json, ok, error, file, backup, diff, tool_use_id"
+
+
+def _action_row(r) -> dict:
+    return {
+        "id": r[0], "sid": r[1], "ts": r[2], "tool": r[3],
+        "args": r[4], "ok": bool(r[5]), "error": r[6],
+        "file": r[7], "backup": r[8], "diff": r[9],
+        "tool_use_id": r[10],
+    }
+
+
+def list_actions(sid: str | None = None, limit: int = 200,
+                 include_diff: bool = False) -> list[dict]:
+    q = f"SELECT {_ACTION_COLS} FROM actions"
+    params: tuple = ()
+    if sid:
+        q += " WHERE sid=?"
+        params = (sid,)
+    q += " ORDER BY ts DESC LIMIT ?"
+    params = params + (limit,)
+    with _conn() as c:
+        rows = c.execute(q, params).fetchall()
+    out = []
+    for r in rows:
+        d = _action_row(r)
+        if not include_diff:
+            d.pop("diff", None)
+        out.append(d)
+    return out
+
+
+def get_action(aid: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute(
+            f"SELECT {_ACTION_COLS} FROM actions WHERE id=?", (aid,),
+        ).fetchone()
+    return _action_row(r) if r else None
+
+
+def set_meta(sid: str, key: str, value) -> None:
+    val = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO session_meta(sid, key, value, updated_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(sid,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (sid, key, val, time.time()),
+        )
+
+
+def get_meta(sid: str, key: str, default=None):
+    with _conn() as c:
+        r = c.execute(
+            "SELECT value FROM session_meta WHERE sid=? AND key=?", (sid, key),
+        ).fetchone()
+    if not r:
+        return default
+    try:
+        return json.loads(r[0])
+    except Exception:
+        return r[0]
+
+
+def get_all_meta(sid: str) -> dict:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT key, value FROM session_meta WHERE sid=?", (sid,),
+        ).fetchall()
+    out = {}
+    for k, v in rows:
+        try:
+            out[k] = json.loads(v)
+        except Exception:
+            out[k] = v
+    return out

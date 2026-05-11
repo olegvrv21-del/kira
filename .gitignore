@@ -1,0 +1,47 @@
+# Virtualenv & caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# SQLite DB & WAL/SHM
+agent_sessions.db
+agent_sessions.db-shm
+agent_sessions.db-wal
+*.db-journal
+
+# Backups created by fs_write / manual tiers
+*.bak.*
+*.bak2.*
+*.bak3.*
+*.bak4.*
+*.bak5.*
+*.bak6.*
+*.bak7.*
+*.bak8.*
+*.bak9.*
+
+# Runtime tokens & secrets
+.restart_token
+.env
+.env.*
+secrets/
+
+# Editor/OS
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
+logs/
+
+# Plain .bak (no timestamp) — pre-Phase1 manual snapshots
+*.bak
+
+# Per-session sandbox scratch
+workspaces/
