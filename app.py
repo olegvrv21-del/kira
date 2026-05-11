@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import agent_runtime
@@ -118,6 +119,11 @@ app = FastAPI()
 import agent_auth
 
 _auth_status = agent_auth.install(app)
+
+# Static asset directory (JS/CSS extracted from index.html).
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 class ChatRequest(BaseModel):

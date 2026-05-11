@@ -33,6 +33,14 @@ def test_root_serves_html(app_client):
     assert 'id="models-view"' in body
     assert 'id="actions-view"' in body
     assert 'data-nav="actions"' in body
+    # JS now lives in /static/app.js; verify the shell loads it.
+    assert "/static/app.js" in body
+
+
+def test_static_app_js_served(app_client):
+    r = app_client.get("/static/app.js")
+    assert r.status_code == 200
+    body = r.text
     assert "applyModel(" in body
     assert "setModel(" not in body  # no broken legacy ref
     assert "type === 'iframe'" in body  # iframe handler shipped
