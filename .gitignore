@@ -45,3 +45,9 @@ logs/
 
 # Per-session sandbox scratch
 workspaces/
+
+# coverage artifacts
+.coverage
+coverage.json
+coverage.xml
+htmlcov/

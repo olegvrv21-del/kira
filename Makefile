@@ -6,6 +6,9 @@ PYTEST = ./.venv/bin/pytest
 test:
 	$(PYTEST) -q tests
 
+coverage:
+	$(PYTEST) --cov=. --cov-report=term --cov-report=json:coverage.json -q tests
+
 compile:
 	$(PY) -m py_compile app.py agent_runtime.py agent_store.py agent_tools.py sandbox_runtime.py sandbox_tools.py agent_skills.py q_client.py
 

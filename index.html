@@ -1514,12 +1514,60 @@
           html += '</tbody></table>';
         }
         body.innerHTML = html;
+        loadCoverage();  // append coverage block below
       } catch (e) {
         body.innerHTML = `<div style="color:#e57373">${e.message || e}</div>`;
       }
     }
     document.getElementById('metrics-refresh')?.addEventListener('click', loadMetrics);
     document.getElementById('metrics-window')?.addEventListener('change', loadMetrics);
+
+    async function loadCoverage() {
+      const body = document.getElementById('metrics-body');
+      try {
+        const r = await fetch('/agent/coverage');
+        const d = await r.json();
+        let html = '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:10px">Покрытие тестами <button id="cov-refresh" class="sq-btn" style="padding:2px 8px;font-size:11px;text-transform:none;letter-spacing:0">прогнать pytest --cov</button></h3>';
+        if (!d.ok) {
+          html += `<div style="color:#e57373">${d.error || 'нет данных'}</div>`;
+          body.insertAdjacentHTML('beforeend', html);
+          document.getElementById('cov-refresh')?.addEventListener('click', runCoverage);
+          return;
+        }
+        const age = d.age_seconds < 60 ? `${d.age_seconds}s` : d.age_seconds < 3600 ? `${Math.floor(d.age_seconds/60)}m` : `${Math.floor(d.age_seconds/3600)}h`;
+        const totalColor = d.total_percent >= 70 ? '#4caf50' : d.total_percent >= 40 ? '#ff9800' : '#e57373';
+        html += `<div style="display:flex;gap:18px;align-items:baseline;margin-bottom:12px">`
+          + `<div><span style="font-size:28px;font-weight:600;color:${totalColor}">${d.total_percent}%</span> <span style="color:var(--muted);font-size:12px">общее покрытие</span></div>`
+          + `<div style="color:var(--muted);font-size:12px">${d.total_covered} / ${d.total_statements} строк • обновлено ${age} назад</div>`
+          + `</div>`;
+        html += '<table class="metric-table"><thead><tr><th>Файл</th><th>Строк</th><th>Не покрыто</th><th>%</th><th></th></tr></thead><tbody>';
+        for (const f of d.files) {
+          const c = f.percent >= 70 ? '#4caf50' : f.percent >= 40 ? '#ff9800' : '#e57373';
+          const w = Math.round(f.percent);
+          html += `<tr><td><code>${f.path}</code></td><td>${f.statements}</td><td>${f.missing}</td><td style="color:${c};font-weight:600">${f.percent}%</td><td style="width:120px"><div class="metric-bar"><div style="width:${w}%;background:${c}"></div></div></td></tr>`;
+        }
+        html += '</tbody></table>';
+        body.insertAdjacentHTML('beforeend', html);
+        document.getElementById('cov-refresh')?.addEventListener('click', runCoverage);
+      } catch (e) {
+        body.insertAdjacentHTML('beforeend', `<div style="color:#e57373">coverage: ${e.message || e}</div>`);
+      }
+    }
+
+    async function runCoverage() {
+      const btn = document.getElementById('cov-refresh');
+      if (btn) { btn.disabled = true; btn.textContent = 'запускаю pytest …'; }
+      try {
+        const r = await fetch('/agent/coverage/run', { method: 'POST' });
+        const d = await r.json();
+        if (!d.ok) {
+          alert('coverage run failed: ' + (d.error || d.returncode));
+        }
+        await loadMetrics();
+      } catch (e) {
+        alert('coverage run error: ' + e.message);
+      }
+    }
 
     async function loadActions() {
       const list = document.getElementById('actions-list');

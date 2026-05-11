@@ -25,3 +25,26 @@ ignore = [
 # Tests may redefine fixture names (F811) and have side-effect-only exprs (B018);
 # unused locals (F841) are OK because we sometimes bind a result for clarity.
 "tests/*" = ["F811", "B018", "F841"]
+
+[tool.coverage.run]
+branch = false
+source = ["."]
+omit = [
+    ".venv/*",
+    "tests/*",
+    "workspaces/*",
+    "sandbox/*",
+    "ops/*",
+    "browser_daemon.py",  # only used when playwright is loaded
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+skip_empty = true
+precision = 1

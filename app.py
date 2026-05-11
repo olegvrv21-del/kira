@@ -224,6 +224,28 @@ async def metrics_sid(sid: str, window: float | None = None):
     return agent_store.compute_metrics(sid=sid, window_seconds=window)
 
 
+@app.get("/agent/coverage")
+async def coverage_endpoint():
+    import agent_coverage
+
+    return agent_coverage.status()
+
+
+@app.get("/agent/coverage/file")
+async def coverage_file(path: str):
+    import agent_coverage
+
+    return agent_coverage.file_detail(path)
+
+
+@app.post("/agent/coverage/run")
+async def coverage_run(timeout: int = 120):
+    import agent_coverage
+
+    # capped to 5 minutes to avoid abuse
+    return agent_coverage.run(timeout=min(max(timeout, 5), 300))
+
+
 @app.get("/skills/{name}")
 async def skill_get(name: str):
     body = agent_skills.load_skill(name)
