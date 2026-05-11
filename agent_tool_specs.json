@@ -1057,5 +1057,145 @@
         }
       }
     }
+  },
+  {
+    "toolSpecification": {
+      "name": "find_definition",
+      "description": "Jump to symbol definition via LSP (pyright for Python, typescript-language-server for TS/JS). Provide `file` plus either (line,character) [0-based] / line_1based, OR `symbol` to auto-locate first occurrence. Returns list of file:line:col definitions.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "File path (absolute or relative to cwd)."
+            },
+            "line": {
+              "type": "integer",
+              "description": "0-based line (LSP). Optional if `symbol` is provided."
+            },
+            "character": {
+              "type": "integer",
+              "description": "0-based column. Default 0."
+            },
+            "line_1based": {
+              "type": "integer",
+              "description": "Alternative: 1-based line."
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Alternative: find first occurrence of this identifier in the file and use its position."
+            }
+          },
+          "required": [
+            "file"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "find_references",
+      "description": "Find all references to symbol via LSP. Same arg style as find_definition. Optional `include_declaration` (default true). Returns file:line:col list.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "File path (absolute or relative to cwd)."
+            },
+            "line": {
+              "type": "integer",
+              "description": "0-based line (LSP). Optional if `symbol` is provided."
+            },
+            "character": {
+              "type": "integer",
+              "description": "0-based column. Default 0."
+            },
+            "line_1based": {
+              "type": "integer",
+              "description": "Alternative: 1-based line."
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Alternative: find first occurrence of this identifier in the file and use its position."
+            },
+            "include_declaration": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "file"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "rename_symbol",
+      "description": "Rename a symbol project-wide via LSP. Computes safe edits across files and applies them (with backups). Args: file, new_name, plus position spec (line+character, line_1based, or symbol). Set apply=false for preview.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "File path (absolute or relative to cwd)."
+            },
+            "line": {
+              "type": "integer",
+              "description": "0-based line (LSP). Optional if `symbol` is provided."
+            },
+            "character": {
+              "type": "integer",
+              "description": "0-based column. Default 0."
+            },
+            "line_1based": {
+              "type": "integer",
+              "description": "Alternative: 1-based line."
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Alternative: find first occurrence of this identifier in the file and use its position."
+            },
+            "new_name": {
+              "type": "string"
+            },
+            "apply": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "file",
+            "new_name"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "diagnostics",
+      "description": "Get type/syntax diagnostics for a file from pyright (.py) or typescript-language-server (.ts/.tsx/.js/.jsx). Args: file, wait_ms (default 4000). Returns clean or list of {severity, location, code, message}.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "wait_ms": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "file"
+          ]
+        }
+      }
+    }
   }
 ]

@@ -169,6 +169,30 @@ def read_file(sid: str, path_in_container: str) -> str:
     return r.stdout
 
 
+def lsp_call(sid: str, path: str, body: dict | None = None,
+             timeout: int = 60) -> dict:
+    """POST/GET to the in-container LSP daemon at 127.0.0.1:9001."""
+    import json as _json
+    name = ensure_container(sid)
+    _LAST_USED[sid] = time.time()
+    url = f"http://127.0.0.1:9001{path}"
+    if body is None:
+        cmd = ["docker", "exec", name, "curl", "-sS", "-X", "POST", url]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    else:
+        cmd = ["docker", "exec", "-i", name, "curl", "-sS",
+               "-H", "Content-Type: application/json",
+               "-X", "POST", "--data-binary", "@-", url]
+        r = subprocess.run(cmd, input=_json.dumps(body),
+                           capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"lsp daemon call failed: {r.stderr.strip()}")
+    try:
+        return _json.loads(r.stdout)
+    except Exception as e:
+        raise RuntimeError(f"lsp daemon non-JSON reply: {r.stdout[:300]} ({e})")
+
+
 def browser_call(sid: str, path: str, body: dict | None = None,
                  timeout: int = 60) -> dict:
     """POST/GET to the in-container browser daemon at 127.0.0.1:9000."""

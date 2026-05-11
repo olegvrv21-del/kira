@@ -928,6 +928,177 @@ def lint(args: dict[str, Any], cwd: str, sid: str) -> str:
 
 # ---------- verify_change (runs INSIDE sandbox) ----------
 
+# ---------- LSP-backed code intel ----------
+
+_LSP_EXTS = (".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+
+
+def _lsp_resolve_pos(args: dict[str, Any], sid: str) -> tuple[str, int, int]:
+    """Return (container_file, line0, col0).
+
+    Accepts either explicit line/character (0-based LSP convention) OR a
+    convenience pair (line_1based, character) where line_1based is 1-based.
+    """
+    f = args.get("file")
+    if not f:
+        raise ValueError("file is required")
+    cpath = _cpath(f, sid)
+    if "line" in args:
+        line0 = int(args["line"])
+    elif "line_1based" in args:
+        line0 = int(args["line_1based"]) - 1
+    else:
+        raise ValueError("line (0-based) or line_1based is required")
+    col0 = int(args.get("character", args.get("col", 0)))
+    return cpath, line0, col0
+
+
+def _find_symbol_pos(sid: str, file_path: str, symbol: str) -> tuple[int, int]:
+    """Find first occurrence of identifier `symbol` in file. Return (line0, col0).
+    """
+    import re
+    cpath = _cpath(file_path, sid)
+    text = sb.read_file(sid, cpath)
+    pat = re.compile(r"\b" + re.escape(symbol) + r"\b")
+    for i, line in enumerate(text.splitlines()):
+        m = pat.search(line)
+        if m:
+            return i, m.start()
+    raise ValueError(f"symbol {symbol!r} not found in {file_path}")
+
+
+def _fmt_loc(loc: dict) -> str:
+    return f"{loc['file']}:{loc['start_line']+1}:{loc['start_character']+1}"
+
+
+def find_definition(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Find symbol definition. Args: file + (line,character) OR file + symbol.
+    Lines/cols are 0-based LSP convention.
+    """
+    f = args.get("file")
+    if not f:
+        raise ValueError("file is required")
+    if "symbol" in args and "line" not in args and "line_1based" not in args:
+        line0, col0 = _find_symbol_pos(sid, f, args["symbol"])
+        cpath = _cpath(f, sid)
+    else:
+        cpath, line0, col0 = _lsp_resolve_pos(args, sid)
+    r = sb.lsp_call(sid, "/definition",
+                    {"file": cpath, "line": line0, "character": col0})
+    locs = r.get("locations", [])
+    if not locs:
+        return f"DEFINITION not found for position {cpath}:{line0+1}:{col0+1}"
+    out = [f"DEFINITION ({len(locs)}):"]
+    for l in locs[:20]:
+        out.append("  " + _fmt_loc(l))
+    return "\n".join(out)
+
+
+def find_references(args: dict[str, Any], cwd: str, sid: str) -> str:
+    f = args.get("file")
+    if not f:
+        raise ValueError("file is required")
+    if "symbol" in args and "line" not in args and "line_1based" not in args:
+        line0, col0 = _find_symbol_pos(sid, f, args["symbol"])
+        cpath = _cpath(f, sid)
+    else:
+        cpath, line0, col0 = _lsp_resolve_pos(args, sid)
+    incl = bool(args.get("include_declaration", True))
+    r = sb.lsp_call(sid, "/references", {
+        "file": cpath, "line": line0, "character": col0,
+        "include_declaration": incl,
+    })
+    locs = r.get("locations", [])
+    if not locs:
+        return f"REFERENCES none for {cpath}:{line0+1}:{col0+1}"
+    out = [f"REFERENCES ({len(locs)}):"]
+    for l in locs[:200]:
+        out.append("  " + _fmt_loc(l))
+    return "\n".join(out)
+
+
+def rename_symbol(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Compute rename edits via LSP and apply them.
+
+    Args: file, (line+character | line_1based | symbol), new_name, apply?=true.
+    With apply=false returns a preview only.
+    """
+    new_name = args.get("new_name")
+    if not new_name:
+        raise ValueError("new_name is required")
+    f = args.get("file")
+    if not f:
+        raise ValueError("file is required")
+    if "symbol" in args and "line" not in args and "line_1based" not in args:
+        line0, col0 = _find_symbol_pos(sid, f, args["symbol"])
+        cpath = _cpath(f, sid)
+    else:
+        cpath, line0, col0 = _lsp_resolve_pos(args, sid)
+    apply = bool(args.get("apply", True))
+    r = sb.lsp_call(sid, "/rename", {
+        "file": cpath, "line": line0, "character": col0,
+        "new_name": new_name,
+    })
+    edits = r.get("edits", [])
+    if not edits:
+        return f"RENAME no edits proposed (symbol may not be renameable here)"
+    total = sum(len(e["edits"]) for e in edits)
+    summary = [f"RENAME -> {new_name}  files={len(edits)}  edits={total}"]
+    for e in edits[:20]:
+        summary.append(f"  {e['file']}: {len(e['edits'])} edit(s)")
+    if not apply:
+        return "\n".join(summary) + "\n(preview only — apply=false)"
+    # apply edits per file: read, splice ranges (sorted reverse), write
+    for fe in edits:
+        fp = fe["file"]
+        text = sb.read_file(sid, fp)
+        lines = text.splitlines(keepends=True)
+        # build absolute char offsets per line
+        offsets = [0]
+        for ln in lines:
+            offsets.append(offsets[-1] + len(ln))
+        def to_offset(line: int, col: int) -> int:
+            if line >= len(lines):
+                return offsets[-1]
+            return offsets[line] + min(col, len(lines[line]))
+        # sort edits by (start_line, start_character) descending so splicing is safe
+        sorted_edits = sorted(
+            fe["edits"],
+            key=lambda x: (x["start_line"], x["start_character"]),
+            reverse=True,
+        )
+        buf = text
+        for ed in sorted_edits:
+            so = to_offset(ed["start_line"], ed["start_character"])
+            eo = to_offset(ed["end_line"], ed["end_character"])
+            buf = buf[:so] + ed["new_text"] + buf[eo:]
+        # backup and write back
+        bak = _backup_if_exists(sid, fp)
+        sb.write_file(sid, fp, buf)
+        summary.append(f"  applied {fp} (backup {bak})")
+    return "\n".join(summary)
+
+
+def diagnostics(args: dict[str, Any], cwd: str, sid: str) -> str:
+    f = args.get("file")
+    if not f:
+        raise ValueError("file is required")
+    cpath = _cpath(f, sid)
+    wait_ms = int(args.get("wait_ms", 4000))
+    r = sb.lsp_call(sid, "/diagnostics", {"file": cpath, "wait_ms": wait_ms},
+                    timeout=max(30, wait_ms // 1000 + 10))
+    diags = r.get("diagnostics", [])
+    if not diags:
+        return f"DIAGNOSTICS clean  file={cpath}"
+    out = [f"DIAGNOSTICS file={cpath}  total={len(diags)}"]
+    for d in diags[:200]:
+        out.append(
+            f"  {d['severity']:<7} {cpath}:{d['start_line']+1}:{d['start_character']+1}"
+            f"  [{d.get('source','')} {d.get('code','')}] {d['message']}"
+        )
+    return "\n".join(out)
+
+
 def verify_change(args: dict[str, Any], cwd: str, sid: str) -> str:
     """Runs validation checks inside the sandbox via shell + python.
     Supports same keys as host verify_change. host.docker.internal works.
@@ -1024,6 +1195,10 @@ TOOLS = {
     "git_commit": git_commit,
     "run_tests": run_tests,
     "lint": lint,
+    "find_definition": find_definition,
+    "find_references": find_references,
+    "rename_symbol": rename_symbol,
+    "diagnostics": diagnostics,
 }
 
 

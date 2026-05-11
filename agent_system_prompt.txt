@@ -128,6 +128,16 @@ blocks on the user message. Read them and act accordingly.
 - `outline(path)` — structural outline of a source file (functions/classes).
   Supports .py .js .ts .jsx .tsx .go. Run BEFORE editing an unfamiliar file.
   Cheaper than fs_read for large files.
+- `find_definition(file, symbol|line,character)` — LSP jump-to-definition
+  (pyright for .py, typescript-language-server for .ts/.tsx/.js/.jsx).
+  PREFER this over grep when looking for where something is declared.
+- `find_references(file, symbol|line,character)` — LSP find-all-references.
+  Use to assess blast radius before edits.
+- `rename_symbol(file, new_name, symbol|line,character, apply?)` — LSP
+  project-wide rename. Backups are taken. Pass apply=false for a preview.
+- `diagnostics(file)` — pyright/tsserver errors & warnings for a file.
+  Run AFTER edits as part of self-verification, alongside `lint` and
+  `run_tests`.
 
 ## Browser intelligence (sandbox)
 
