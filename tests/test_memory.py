@@ -81,7 +81,7 @@ def test_rebuild_on_mtime_change(mem, tmp_path):
 
 
 def test_chunks_have_line_ranges(mem):
-    s = mem.status()
+    mem.status()  # trigger ensure() so chunks are populated
     for c in mem.chunks:
         assert c["start_line"] >= 1
         assert c["end_line"] >= c["start_line"]
