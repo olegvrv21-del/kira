@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+FROM mcr.microsoft.com/playwright/python:v1.59.0-noble
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ripgrep jq tree less file unzip python3-pip curl ca-certificates gnupg \
