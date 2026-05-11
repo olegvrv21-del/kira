@@ -1050,19 +1050,45 @@ async def run_agent(
                     try:
                         import agent_critic
 
-                        # Get diff to review: prefer the staged-but-unfinished diff,
-                        # i.e. what would be committed. For simplicity ask the
-                        # critic on `git diff HEAD`.
+                        # Get diff to review: what `git_commit` would actually
+                        # commit. The tool runs `git add -A` then `git commit`,
+                        # so we ask the critic on `git diff HEAD` in the SAME
+                        # repo path the agent is committing into.
+                        # FIX: previously hard-coded /host/webchat in sandbox
+                        # mode, which made the critic review webchat sources
+                        # instead of the agent's own workspace changes.
+                        commit_repo = (
+                            (args.get("path") if isinstance(args, dict) else None) or "/workspace"
+                        )
                         diff_text = ""
                         if USE_SANDBOX:
                             try:
                                 import sandbox_runtime as sb_rt
 
+                                # Stage everything first so the diff reflects
+                                # what the upcoming commit will actually include.
+                                await asyncio.to_thread(
+                                    sb_rt.exec_argv,
+                                    session_id,
+                                    ["git", "-c", "safe.directory=*", "add", "-A"],
+                                    commit_repo,
+                                    30,
+                                )
+                                # `git diff --cached` works for both first
+                                # commit (compares to empty tree) and later.
                                 r = await asyncio.to_thread(
                                     sb_rt.exec_argv,
                                     session_id,
-                                    ["git", "-c", "safe.directory=*", "-c", "core.pager=cat", "diff", "HEAD"],
-                                    "/host/webchat",
+                                    [
+                                        "git",
+                                        "-c",
+                                        "safe.directory=*",
+                                        "-c",
+                                        "core.pager=cat",
+                                        "diff",
+                                        "--cached",
+                                    ],
+                                    commit_repo,
                                     30,
                                 )
                                 diff_text = r[1]
@@ -1071,6 +1097,16 @@ async def run_agent(
                         else:
                             import subprocess
 
+                            # In non-sandbox mode, the commit happens in `cwd`.
+                            # If args.path was specified, prefer that.
+                            repo_cwd = commit_repo if (commit_repo and commit_repo != "/workspace") else (cwd or ".")
+                            # Stage first so --cached reflects upcoming commit.
+                            subprocess.run(
+                                ["git", "-c", "safe.directory=*", "-C", repo_cwd, "add", "-A"],
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                            )
                             r = subprocess.run(
                                 [
                                     "git",
@@ -1079,9 +1115,9 @@ async def run_agent(
                                     "-c",
                                     "core.pager=cat",
                                     "-C",
-                                    cwd or ".",
+                                    repo_cwd,
                                     "diff",
-                                    "HEAD",
+                                    "--cached",
                                 ],
                                 capture_output=True,
                                 text=True,
