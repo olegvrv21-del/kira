@@ -107,3 +107,12 @@ make all     # both
 
 Phases 1–5 + iterations A/B/C complete. All tests green. Next planned:
 real LSP integration (pyright + typescript-language-server).
+
+## Documentation
+
+- [CHANGELOG.md](CHANGELOG.md) — release history (current: **0.2.0** — Brand & Observability)
+- [LICENSE](LICENSE) — MIT
+
+## License
+
+MIT © 2026 Oleg Vorobiev. See [LICENSE](LICENSE).
