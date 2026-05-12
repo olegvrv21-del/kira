@@ -741,90 +741,89 @@ async def run_agent(
     history: list[dict] | None = None,
     images: list[dict] | None = None,
 ) -> AsyncIterator[bytes]:
+    """Phase 3c.3: main agent loop is provider-agnostic.
+
+    Internally we keep a single source of truth — a canonical `list[Message]`
+    built from the caller's Q-dict `history`. Each turn calls
+    `provider.stream(messages, tools, model=...)` which yields `StreamEvent`s
+    (text / tool_call / throttle / metering / context_usage / usage / done).
+
+    On the way out we sync `history` (the Q-dict the caller / app.py keeps
+    cached and persists in SQLite) by rewriting it in-place from
+    `messages_to_q_history(...)`. SQLite still stores Q dicts so existing
+    transcripts open unchanged; the loop itself no longer touches Q-shape
+    events anywhere.
+
+    Switching `KIRA_LLM_PROVIDER` now actually swaps the wire format end-to-end.
+    """
     session_id = _safe_sid(session_id)
     cwd_path = (WORKSPACES / session_id).resolve()
-    # Defence-in-depth: even after regex validation, ensure the resolved path
-    # is still inside WORKSPACES (covers symlink tricks if anyone pre-creates one).
     if not str(cwd_path).startswith(str(WORKSPACES.resolve()) + os.sep):
         raise ValueError("invalid session_id")
     cwd_path.mkdir(parents=True, exist_ok=True)
-    # Inside sandbox the agent sees /workspace; outside it sees the host path.
     cwd = "/workspace" if USE_SANDBOX else str(cwd_path)
 
     conv_id = str(uuid.uuid4())
     cont_id = str(uuid.uuid4())
 
-    # Phase 3c.2: the main loop now operates on canonical Message[]; the Q-dict
-    # `history` is kept in lockstep for DB back-compat (agent_session_get parses
-    # Q dicts directly). Each turn we build the request body by feeding the
-    # canonical list to QProvider.messages_to_q_body, so the loop no longer
-    # speaks Bedrock dialect anywhere.
+    from llm import get_provider
     from llm.base import Message as _M
     from llm.base import ToolCall as _TC
     from llm.base import toolspecs_from_openai_json
-    from llm.q_provider import QProvider, messages_to_q_body, q_history_to_messages
+    from llm.q_provider import QProvider, messages_to_q_history, q_history_to_messages
 
-    _main_provider = QProvider(api_key=key_pool.current() or api_key)
+    provider_name = os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
+    if provider_name == "amazon-q":
+        # Honour live key rotation in prod.
+        _main_provider = QProvider(api_key=key_pool.current() or api_key)
+    else:
+        _main_provider = get_provider(provider_name)
     _canon_tools = toolspecs_from_openai_json(TOOL_SPECS)
 
     if history is None:
         history = []
-    if not history:
-        history.append(
-            {
-                "userInputMessage": {
-                    "content": SYSTEM_PROMPT,
-                    "userInputMessageContext": {"envState": _env_state(cwd)},
-                    "origin": "KIRO_CLI",
-                    "modelId": model,
-                }
-            }
-        )
 
-    # Canonical view of `history` — we work on this list, then sync deltas back
-    # into `history` (Q-dict) so SQLite + agent_session_get keep working.
-    messages: list = q_history_to_messages(history)
+    # Build canonical message list from caller's Q-dict history.
+    messages: list = q_history_to_messages(history) if history else []
+    if not messages:
+        messages.append(_M(role="system", content=SYSTEM_PROMPT))
+
+    # Helper: keep the caller-visible Q-dict history in sync with `messages`.
+    # We rewrite it in place so cached references (app.py's _AGENT_SESSIONS)
+    # and save_session() observe the new state.
+    def _sync_history_dict() -> None:
+        new = messages_to_q_history(messages, wrap_text=True)
+        history.clear()
+        history.extend(new)
 
     yield _sse({"type": "meta", "session_id": session_id, "cwd": cwd, "model": model})
 
-    # Safety-net: if the last assistant turn in history has toolUses that were
-    # never followed by a user toolResults (e.g. a previous turn died with 500),
-    # inject synthetic 'interrupted' tool_results before sending the new prompt.
-    # Otherwise Bedrock returns 400: tool_use ids were found without tool_result.
-    if history:
-        last = history[-1]
-        arm = last.get("assistantResponseMessage") or {}
-        orphan = [tu for tu in (arm.get("toolUses") or []) if tu.get("toolUseId")]
-        if orphan:
-            stub_results = [
-                {
-                    "toolUseId": tu["toolUseId"],
-                    "content": [{"text": "[interrupted: previous turn aborted; tool was not executed]"}],
-                    "status": "error",
-                }
-                for tu in orphan
-            ]
-            history.append(_user_msg("", model, cwd, tool_results=stub_results))
-            # mirror into canonical
-            for tu in orphan:
-                messages.append(
-                    _M(
-                        role="tool",
-                        content="[interrupted: previous turn aborted; tool was not executed]",
-                        tool_call_id=tu["toolUseId"],
-                        name="error",
-                    )
+    # Safety-net: if the last assistant turn left tool_calls unfulfilled (the
+    # previous turn died mid-flight), inject synthetic error tool messages so
+    # the next request doesn't 400 with "tool_use ids without tool_result".
+    if messages and messages[-1].role == "assistant" and messages[-1].tool_calls:
+        for tc in messages[-1].tool_calls:
+            messages.append(
+                _M(
+                    role="tool",
+                    content="[interrupted: previous turn aborted; tool was not executed]",
+                    tool_call_id=tc.id,
+                    name="error",
                 )
-            messages.append(_M(role="user", content=""))
+            )
+        # Empty user turn carries the buffered tool messages to QProvider.
+        messages.append(_M(role="user", content=""))
+        _sync_history_dict()
 
     credits = 0.0
     context_pct = 0.0
     pending_images: list[dict] = list(images) if images else []
-    current = _user_msg(prompt, model, cwd, images=pending_images or None)
-    # Canonical current-turn user message. Images are passed via `extra` below,
-    # so we don't embed them in the Message content here.
-    _current_msg = _M(role="user", content=prompt or "")
-    pending_images_for_provider = pending_images or None
+    pending_images_for_provider: list[dict] | None = pending_images or None
+
+    # The "current" turn the model is about to consume. We append it to
+    # `messages` only after the request succeeds (so a mid-stream failure
+    # doesn't poison history with a duplicate user prompt).
+    current_user = _M(role="user", content=prompt or "")
     pending_images = []
 
     cancel_ev = _register_cancel(session_id)
@@ -839,175 +838,149 @@ async def run_agent(
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn})
                 yield _sse({"type": "done"})
                 return
-            # Build request body from canonical messages + the current user turn.
-            body = messages_to_q_body(
-                messages + [_current_msg],
-                _canon_tools,
-                model=model,
-                conversation_id=conv_id,
-                continuation_id=cont_id,
-                env_state=_env_state(cwd),
-                images=pending_images_for_provider,
-                wrap_text=True,
-            )
-            pending_images_for_provider = None  # one-shot
-            text_chunks: list[str] = []
-            tool_uses: dict[str, dict] = {}
-            tool_order: list[str] = []
-            message_id = None
 
+            text_chunks: list[str] = []
+            tool_calls_emitted: list = []  # list[ToolCall]
+            message_id: str | None = None
             cancelled_mid_stream = False
+            extra = {
+                "conversation_id": conv_id,
+                "continuation_id": cont_id,
+                "env_state": _env_state(cwd),
+            }
+            if pending_images_for_provider:
+                extra["images"] = pending_images_for_provider
+
             try:
-                # We feed the pre-built body via stream_raw_body so the canonical
-                # `messages_to_q_body` call above can stay the single point of
-                # vendor-shape construction in the loop. The provider’s
-                # high-level `stream()` would re-build the body from scratch —
-                # we already have it canonicalised, so we hand it over directly.
-                async for et, payload in _main_provider.stream_raw_body(body, cancel=cancel_ev):
-                    if et == "_cancelled":
+                async for ev in _main_provider.stream(
+                    messages + [current_user],
+                    _canon_tools,
+                    model=model,
+                    cancel=cancel_ev,
+                    extra=extra,
+                ):
+                    if ev.type == "cancelled":
                         cancelled_mid_stream = True
                         break
-                    if et == "_throttle":
+                    if ev.type == "text" and ev.text:
+                        text_chunks.append(ev.text)
+                        yield _sse({"type": "text", "delta": ev.text})
+                    elif ev.type == "tool_call" and ev.tool is not None:
+                        tool_calls_emitted.append(ev.tool)
+                    elif ev.type == "throttle":
+                        meta = ev.meta or {}
                         yield _sse(
                             {
                                 "type": "throttle",
-                                "reason": payload.get("reason"),
-                                "attempt": payload.get("attempt"),
-                                "sleep": payload.get("sleep"),
+                                "reason": meta.get("reason"),
+                                "attempt": meta.get("attempt"),
+                                "sleep": meta.get("sleep"),
                             }
                         )
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    if et == "assistantResponseEvent":
-                        c = payload.get("content", "")
-                        if c:
-                            text_chunks.append(c)
-                            yield _sse({"type": "text", "delta": c})
-                        mid = payload.get("messageId")
+                    elif ev.type == "metering":
+                        credits += float((ev.meta or {}).get("credits", 0) or 0)
+                    elif ev.type == "context_usage":
+                        context_pct = float((ev.meta or {}).get("context_pct", 0) or 0)
+                    elif ev.type == "message_id":
+                        mid = (ev.meta or {}).get("message_id")
                         if mid:
                             message_id = mid
-                    elif et == "toolUseEvent":
-                        tid = payload.get("toolUseId")
-                        if not tid:
-                            continue
-                        if tid not in tool_uses:
-                            tool_uses[tid] = {
-                                "toolUseId": tid,
-                                "name": payload.get("name", ""),
-                                "_input_str": "",
+                    elif ev.type == "error":
+                        # Non-fatal provider errors — log via SSE, continue stream.
+                        yield _sse(
+                            {
+                                "type": "error",
+                                "message": str((ev.meta or {}).get("message", "provider error")),
                             }
-                            tool_order.append(tid)
-                        inp = payload.get("input")
-                        if inp:
-                            tool_uses[tid]["_input_str"] += inp
-                        if payload.get("stop"):
-                            raw = tool_uses[tid]["_input_str"]
-                            try:
-                                tool_uses[tid]["input"] = json.loads(raw) if raw else {}
-                            except Exception as e:
-                                tool_uses[tid]["input"] = {"_parse_error": str(e), "_raw": raw}
-                    elif et == "meteringEvent":
-                        credits += float(payload.get("usage", 0))
-                    elif et == "contextUsageEvent":
-                        context_pct = float(payload.get("contextUsagePercentage", 0))
+                        )
+                    # 'usage' / 'done' events: nothing to do here (loop ends naturally).
             except Exception as e:
-                # If `current` carries toolResults (continuation of a previous
-                # assistant.toolUses), we MUST persist it before returning.
-                # Otherwise next request sees orphan toolUses and Bedrock 400s.
-                try:
-                    ctx = (current.get("userInputMessage") or {}).get("userInputMessageContext") or {}
-                    if ctx.get("toolResults"):
-                        history.append(current)
-                        # canonical mirror handled below via the tool-results
-                        # already in `messages` (we append them BEFORE the
-                        # stream call when continuing a turn).
-                except Exception:
-                    pass
+                # If `current_user` was an empty turn carrying tool_results (the
+                # continuation after a previous assistant.tool_calls), they're
+                # already in `messages` as role='tool' entries — keep them so
+                # the next request doesn't see orphan tool_uses.
+                _sync_history_dict()
                 yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
                 return
 
+            pending_images_for_provider = None  # one-shot per turn
+
             if cancelled_mid_stream or _is_cancelled():
                 # Persist whatever the assistant produced so history stays consistent.
-                ctx = (current.get("userInputMessage") or {}).get("userInputMessageContext") or {}
-                carries_tool_results = bool(ctx.get("toolResults"))
-                if text_chunks or tool_order or carries_tool_results:
-                    history.append(current)
-                    history.append(
-                        {
-                            "assistantResponseMessage": {
-                                "messageId": message_id or uuid.uuid4().hex,
-                                "content": "".join(text_chunks),
-                                "toolUses": [],  # tools weren't executed
-                            }
-                        }
-                    )
-                    # canonical mirror
-                    messages.append(_current_msg)
+                if text_chunks or tool_calls_emitted or current_user.content:
+                    messages.append(current_user)
                     messages.append(
                         _M(
                             role="assistant",
                             content="".join(text_chunks),
                             name=message_id,
+                            # Tools weren't executed → drop the tool_calls so we
+                            # don't leave orphans for the next turn.
+                            tool_calls=[],
                         )
                     )
+                    _sync_history_dict()
                 yield _sse({"type": "cancelled"})
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
                 yield _sse({"type": "done"})
                 return
 
             message_id = message_id or uuid.uuid4().hex
-            if not tool_order:
-                history.append(current)
-                history.append(
-                    {
-                        "assistantResponseMessage": {
-                            "messageId": message_id,
-                            "content": "".join(text_chunks),
-                            "toolUses": [],
-                        }
-                    }
-                )
-                messages.append(_current_msg)
+
+            # ----- final answer (no tools): commit + return ------------------
+            if not tool_calls_emitted:
+                messages.append(current_user)
                 messages.append(
-                    _M(role="assistant", content="".join(text_chunks), name=message_id)
+                    _M(role="assistant", content="".join(text_chunks), name=message_id, tool_calls=[])
                 )
+                _sync_history_dict()
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
                 yield _sse({"type": "done"})
                 return
 
-            # cost limit check (after each assistant turn before tools)
+            # Cost-limit check between assistant turn and tool execution.
             if _cost_limit_exceeded is not None:
                 hit = _cost_limit_exceeded(session_id, credits)
                 if hit:
+                    # Still commit the assistant turn (without the un-executed tool_calls)
+                    # so the next turn doesn't see orphans.
+                    messages.append(current_user)
+                    messages.append(
+                        _M(role="assistant", content="".join(text_chunks), name=message_id, tool_calls=[])
+                    )
+                    _sync_history_dict()
                     yield _sse({"type": "error", "message": hit})
                     yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
                     yield _sse({"type": "done"})
                     return
 
-            # execute tools
-            results = []
-            for tid in tool_order:
-                tu = tool_uses[tid]
-                name = tu["name"]
-                args = tu.get("input", {})
+            # ----- execute tools, stream tool_results ------------------------
+            tool_results_for_history: list[_M] = []
+
+            for tc in tool_calls_emitted:
+                tid = tc.id
+                name = tc.name
+                args = tc.arguments or {}
                 yield _sse({"type": "tool_call", "id": tid, "name": name, "input": args})
+
+                # ---- built-in tool: llm_one_shot ----
                 if name == "llm_one_shot":
                     sub_model = (args.get("model") or "claude-haiku-4.5").strip()
                     if sub_model.startswith("q/"):
                         sub_model = sub_model[2:]
-                    sub_prompt = args.get("prompt") or ""
-                    sub_system = args.get("system")
-                    sub_max = args.get("max_tokens")
-                    out = await _llm_one_shot(api_key, sub_prompt, sub_model, system=sub_system, max_tokens=sub_max)
+                    out = await _llm_one_shot(
+                        api_key,
+                        args.get("prompt") or "",
+                        sub_model,
+                        system=args.get("system"),
+                        max_tokens=args.get("max_tokens"),
+                    )
                     status = "error" if out.startswith("[llm_one_shot error]") else "success"
                     try:
                         import agent_store as _st
 
                         _st.log_action(
-                            session_id,
-                            name,
-                            args,
+                            session_id, name, args,
                             ok=(status == "success"),
                             error=None if status == "success" else out[:500],
                             tool_use_id=tid,
@@ -1015,8 +988,12 @@ async def run_agent(
                     except Exception:
                         pass
                     yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    results.append({"toolUseId": tid, "content": [{"text": out}], "status": status})
+                    tool_results_for_history.append(
+                        _M(role="tool", content=out, tool_call_id=tid, name=status)
+                    )
                     continue
+
+                # ---- built-in tool: output_iframe ----
                 if name == "output_iframe":
                     html = args.get("html") or ""
                     title = args.get("title") or ""
@@ -1028,29 +1005,28 @@ async def run_agent(
                         import agent_store as _st
 
                         _st.log_action(
-                            session_id,
-                            name,
-                            {"title": title, "html_len": len(html)},
+                            session_id, name, {"title": title, "html_len": len(html)},
                             ok=(status == "success"),
                             error=None if status == "success" else out,
                             tool_use_id=tid,
                         )
                     except Exception:
                         pass
-                    # The frontend renders this via the special 'iframe' SSE event.
                     yield _sse({"type": "iframe", "id": tid, "title": title, "html": html})
                     yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    results.append({"toolUseId": tid, "content": [{"text": out}], "status": status})
+                    tool_results_for_history.append(
+                        _M(role="tool", content=out, tool_call_id=tid, name=status)
+                    )
                     continue
+
+                # ---- built-in tool: plan ----
                 if name == "plan":
                     status, out = _handle_plan(session_id, args)
                     try:
                         import agent_store as _st
 
                         _st.log_action(
-                            session_id,
-                            name,
-                            args,
+                            session_id, name, args,
                             ok=(status == "success"),
                             error=None if status == "success" else out[:500],
                         )
@@ -1058,18 +1034,30 @@ async def run_agent(
                         pass
                     yield _sse({"type": "plan", "plan": _load_plan(session_id)})
                     yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    results.append({"toolUseId": tid, "content": [{"text": out}], "status": status})
+                    tool_results_for_history.append(
+                        _M(role="tool", content=out, tool_call_id=tid, name=status)
+                    )
                     continue
+
+                # ---- delegated: use_subagent ----
                 if name == "use_subagent":
+                    out_text = ""
+                    status = "success"
                     async for ev_b, out in _handle_subagent(api_key, args, model, cwd, session_id, tid):
                         if ev_b is not None:
                             yield ev_b
                         if out is not None:
                             status, out_text = out
                             yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out_text})
-                            results.append({"toolUseId": tid, "content": [{"text": out_text}], "status": status})
+                    tool_results_for_history.append(
+                        _M(role="tool", content=out_text, tool_call_id=tid, name=status)
+                    )
                     continue
+
+                # ---- delegated: dev_loop ----
                 if name == "dev_loop":
+                    out_text = ""
+                    status = "success"
                     async for ev_b, out in _handle_dev_loop(api_key, args, model, cwd, session_id, tid, toolkit):
                         if ev_b is not None:
                             yield ev_b
@@ -1079,9 +1067,7 @@ async def run_agent(
                                 import agent_store as _st
 
                                 _st.log_action(
-                                    session_id,
-                                    name,
-                                    args,
+                                    session_id, name, args,
                                     ok=(status == "success"),
                                     error=None if status == "success" else out_text[:500],
                                     tool_use_id=tid,
@@ -1089,31 +1075,23 @@ async def run_agent(
                             except Exception:
                                 pass
                             yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out_text})
-                            results.append({"toolUseId": tid, "content": [{"text": out_text}], "status": status})
+                    tool_results_for_history.append(
+                        _M(role="tool", content=out_text, tool_call_id=tid, name=status)
+                    )
                     continue
-                # ---- auto-critic before git_commit ----
+
+                # ---- auto-critic before git_commit (KIRA_CRITIC_AUTO) ----
                 critic_block = None
                 if name == "git_commit" and os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True"):
                     try:
                         import agent_critic
 
-                        # Get diff to review: what `git_commit` would actually
-                        # commit. The tool runs `git add -A` then `git commit`,
-                        # so we ask the critic on `git diff HEAD` in the SAME
-                        # repo path the agent is committing into.
-                        # FIX: previously hard-coded /host/webchat in sandbox
-                        # mode, which made the critic review webchat sources
-                        # instead of the agent's own workspace changes.
-                        commit_repo = (
-                            (args.get("path") if isinstance(args, dict) else None) or "/workspace"
-                        )
+                        commit_repo = (args.get("path") if isinstance(args, dict) else None) or "/workspace"
                         diff_text = ""
                         if USE_SANDBOX:
                             try:
                                 import sandbox_runtime as sb_rt
 
-                                # Stage everything first so the diff reflects
-                                # what the upcoming commit will actually include.
                                 await asyncio.to_thread(
                                     sb_rt.exec_argv,
                                     session_id,
@@ -1121,20 +1099,11 @@ async def run_agent(
                                     commit_repo,
                                     30,
                                 )
-                                # `git diff --cached` works for both first
-                                # commit (compares to empty tree) and later.
                                 r = await asyncio.to_thread(
                                     sb_rt.exec_argv,
                                     session_id,
-                                    [
-                                        "git",
-                                        "-c",
-                                        "safe.directory=*",
-                                        "-c",
-                                        "core.pager=cat",
-                                        "diff",
-                                        "--cached",
-                                    ],
+                                    ["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
+                                     "diff", "--cached"],
                                     commit_repo,
                                     30,
                                 )
@@ -1144,70 +1113,50 @@ async def run_agent(
                         else:
                             import subprocess
 
-                            # In non-sandbox mode, the commit happens in `cwd`.
-                            # If args.path was specified, prefer that.
                             repo_cwd = commit_repo if (commit_repo and commit_repo != "/workspace") else (cwd or ".")
-                            # Stage first so --cached reflects upcoming commit.
                             subprocess.run(
                                 ["git", "-c", "safe.directory=*", "-C", repo_cwd, "add", "-A"],
-                                capture_output=True,
-                                text=True,
-                                timeout=30,
+                                capture_output=True, text=True, timeout=30,
                             )
                             r = subprocess.run(
-                                [
-                                    "git",
-                                    "-c",
-                                    "safe.directory=*",
-                                    "-c",
-                                    "core.pager=cat",
-                                    "-C",
-                                    repo_cwd,
-                                    "diff",
-                                    "--cached",
-                                ],
-                                capture_output=True,
-                                text=True,
-                                timeout=30,
+                                ["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
+                                 "-C", repo_cwd, "diff", "--cached"],
+                                capture_output=True, text=True, timeout=30,
                             )
                             diff_text = r.stdout
                         verdict = await agent_critic.review_diff(
-                            api_key, diff_text, intent=(args.get("message") if isinstance(args, dict) else "") or ""
+                            api_key, diff_text,
+                            intent=(args.get("message") if isinstance(args, dict) else "") or "",
                         )
-                        yield _sse(
-                            {
-                                "type": "critic",
-                                "id": tid,
-                                "verdict": verdict.get("verdict"),
-                                "reason": verdict.get("reason", ""),
-                                "issues": verdict.get("issues", []),
-                            }
-                        )
+                        yield _sse({
+                            "type": "critic", "id": tid,
+                            "verdict": verdict.get("verdict"),
+                            "reason": verdict.get("reason", ""),
+                            "issues": verdict.get("issues", []),
+                        })
                         if verdict.get("verdict") == "BLOCK":
                             critic_block = verdict.get("reason") or "critic blocked the commit"
                     except Exception as e:
-                        yield _sse(
-                            {"type": "critic", "id": tid, "verdict": "OK", "reason": f"critic-error: {e}", "issues": []}
-                        )
+                        yield _sse({
+                            "type": "critic", "id": tid,
+                            "verdict": "OK", "reason": f"critic-error: {e}", "issues": [],
+                        })
+
                 # ---- pre_tool hooks ----
                 pre_events = []
                 deny_msg = critic_block
                 try:
                     pre_events = agent_hooks.run_pre_tool(session_id, name, args)
                 except Exception as e:
-                    pre_events = [
-                        {
-                            "hook_id": "_error",
-                            "event": "pre_tool",
-                            "type": "log",
-                            "message": f"hook error: {e}",
-                            "tool": name,
-                        }
-                    ]
+                    pre_events = [{
+                        "hook_id": "_error", "event": "pre_tool", "type": "log",
+                        "message": f"hook error: {e}", "tool": name,
+                    }]
                 for ev_hook in pre_events:
                     yield _sse({**ev_hook, "type": "hook", "id": tid, "action_type": ev_hook.get("type")})
                     if ev_hook.get("type") == "deny":
                         deny_msg = ev_hook.get("message") or "denied by hook"
+
                 if deny_msg is not None:
                     out = f"HOOK_DENY: {deny_msg}"
                     status, imgs = "error", None
@@ -1215,12 +1164,9 @@ async def run_agent(
                         import agent_store as _st
 
                         _st.log_action(
-                            session_id,
-                            "_hook_deny",
+                            session_id, "_hook_deny",
                             {"tool": name, "message": deny_msg, "args": args},
-                            ok=False,
-                            error=deny_msg[:500],
-                            tool_use_id=tid,
+                            ok=False, error=deny_msg[:500], tool_use_id=tid,
                         )
                     except Exception:
                         pass
@@ -1228,21 +1174,18 @@ async def run_agent(
                     status, out, imgs = await asyncio.to_thread(toolkit.run_tool, name, args, cwd, session_id)
                 else:
                     status, out, imgs = await asyncio.to_thread(toolkit.run_tool, name, args, cwd)
+
                 # ---- post_tool hooks ----
                 try:
                     post_events = agent_hooks.run_post_tool(session_id, name, args, status, out)
                 except Exception as e:
-                    post_events = [
-                        {
-                            "hook_id": "_error",
-                            "event": "post_tool",
-                            "type": "log",
-                            "message": f"hook error: {e}",
-                            "tool": name,
-                        }
-                    ]
+                    post_events = [{
+                        "hook_id": "_error", "event": "post_tool", "type": "log",
+                        "message": f"hook error: {e}", "tool": name,
+                    }]
                 for ev_hook in post_events:
                     yield _sse({**ev_hook, "type": "hook", "id": tid, "action_type": ev_hook.get("type")})
+
                 if imgs:
                     pending_images.extend(imgs)
                 bak = None
@@ -1259,90 +1202,57 @@ async def run_agent(
                     import agent_store as _st
 
                     action_id = _st.log_action(
-                        session_id,
-                        name,
-                        args,
+                        session_id, name, args,
                         ok=(status == "success"),
                         error=None if status == "success" else (out or "")[:500],
                         file=(args.get("path") if isinstance(args, dict) else None),
-                        backup=bak,
-                        diff=diff_text,
-                        tool_use_id=tid,
+                        backup=bak, diff=diff_text, tool_use_id=tid,
                     )
                 except Exception:
                     pass
-                ev = {"type": "tool_result", "id": tid, "status": status, "output": out, "has_image": bool(imgs)}
+                ev_out = {
+                    "type": "tool_result", "id": tid, "status": status, "output": out,
+                    "has_image": bool(imgs),
+                }
                 if action_id is not None:
-                    ev["action_id"] = action_id
+                    ev_out["action_id"] = action_id
                 if bak:
-                    ev["backup"] = bak
+                    ev_out["backup"] = bak
                 if diff_text:
-                    ev["diff"] = diff_text
-                    ev["diff_lines"] = diff_lines
-                yield _sse(ev)
-                results.append(
-                    {
-                        "toolUseId": tid,
-                        "content": [{"text": out}],
-                        "status": status,
-                    }
+                    ev_out["diff"] = diff_text
+                    ev_out["diff_lines"] = diff_lines
+                yield _sse(ev_out)
+                tool_results_for_history.append(
+                    _M(role="tool", content=out or "", tool_call_id=tid, name=status)
                 )
 
-            history.append(current)
-            history.append(
-                {
-                    "assistantResponseMessage": {
-                        "messageId": message_id,
-                        "content": "".join(text_chunks),
-                        "toolUses": [
-                            {
-                                "toolUseId": tool_uses[tid]["toolUseId"],
-                                "name": tool_uses[tid]["name"],
-                                "input": tool_uses[tid].get("input", {}),
-                            }
-                            for tid in tool_order
-                        ],
-                    }
-                }
-            )
-            # canonical mirror: the user turn we just sent + the assistant turn + tool results
-            messages.append(_current_msg)
+            # ----- commit the round-trip into canonical history --------------
+            messages.append(current_user)
             messages.append(
                 _M(
                     role="assistant",
                     content="".join(text_chunks),
                     name=message_id,
                     tool_calls=[
-                        _TC(
-                            id=tool_uses[tid]["toolUseId"],
-                            name=tool_uses[tid]["name"],
-                            arguments=tool_uses[tid].get("input", {}) or {},
-                        )
-                        for tid in tool_order
+                        _TC(id=tc.id, name=tc.name, arguments=tc.arguments or {})
+                        for tc in tool_calls_emitted
                     ],
                 )
             )
-            for r in results:
-                messages.append(
-                    _M(
-                        role="tool",
-                        content=(r.get("content") or [{}])[0].get("text", "") if r.get("content") else "",
-                        tool_call_id=r.get("toolUseId") or "",
-                        name=r.get("status") or "success",
-                    )
-                )
+            messages.extend(tool_results_for_history)
+            _sync_history_dict()
+
             yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
+
+            # Next turn: empty user message; the buffered tool_results above
+            # get attached to it inside QProvider.messages_to_q_body.
             next_images = pending_images or None
             pending_images = []
-            current = _user_msg("", model, cwd, tool_results=results, images=next_images)
-            # Next-turn canonical user message: empty text, tool_results carried
-            # via the preceding role='tool' messages we just appended.
-            _current_msg = _M(role="user", content="")
+            current_user = _M(role="user", content="")
             pending_images_for_provider = next_images
 
         yield _sse({"type": "error", "message": "max turns reached"})
     except asyncio.CancelledError:
-        # Client TCP drop. Don't yield further (response gone). Just clean up.
         raise
     except Exception as e:
         yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
