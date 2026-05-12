@@ -831,6 +831,14 @@ async def run_agent(
     def _is_cancelled() -> bool:
         return cancel_ev.is_set()
 
+    # Bug 1 workaround: Sonnet/Opus frequently emit a single plan.update tool_call
+    # then end_turn with no further tools, which trips the "no tool_calls -> done"
+    # branch below and leaves the actual task untouched. If the previous round
+    # executed ONLY the plan tool and the model now emits zero tools, inject a
+    # one-shot nudge and continue the loop instead of returning done.
+    last_round_only_plan = False
+    plan_nudge_budget = 2  # at most two automatic nudges per /agent call
+
     try:
         for turn in range(MAX_TURNS):
             if _is_cancelled():
@@ -929,6 +937,32 @@ async def run_agent(
 
             # ----- final answer (no tools): commit + return ------------------
             if not tool_calls_emitted:
+                # Plan-nudge: if the previous round executed only the plan tool
+                # and we got an empty/short text answer with no tools, the model
+                # has fallen into the "set the plan then stop" trap. Coax it to
+                # actually execute the first in_progress step instead of
+                # returning done with the task unfinished.
+                short_text = len("".join(text_chunks).strip()) < 240
+                if last_round_only_plan and short_text and plan_nudge_budget > 0:
+                    plan_nudge_budget -= 1
+                    last_round_only_plan = False
+                    nudge = (
+                        "Continue. The plan is recorded, now execute the first "
+                        "in_progress step. Call the appropriate tool (fs_write, "
+                        "patch, execute_bash, browser_*, fs_read, ...). Do NOT just "
+                        "summarize what you will do -- perform the action. If the "
+                        "task is genuinely complete, mark every plan item done "
+                        "and reply with a short confirmation."
+                    )
+                    messages.append(current_user)
+                    messages.append(
+                        _M(role="assistant", content="".join(text_chunks), name=message_id, tool_calls=[])
+                    )
+                    _sync_history_dict()
+                    yield _sse({"type": "plan_nudge", "reason": "plan-only round produced no follow-up tool"})
+                    current_user = _M(role="user", content=nudge)
+                    pending_images_for_provider = None
+                    continue
                 messages.append(current_user)
                 messages.append(
                     _M(role="assistant", content="".join(text_chunks), name=message_id, tool_calls=[])
@@ -1034,6 +1068,10 @@ async def run_agent(
             )
             messages.extend(tool_results_for_history)
             _sync_history_dict()
+
+            # Track "plan-only" rounds for the Bug 1 nudge above.
+            executed_names = {tc.name for tc in tool_calls_emitted}
+            last_round_only_plan = executed_names == {"plan"}
 
             yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
 

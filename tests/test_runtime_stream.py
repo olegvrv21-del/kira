@@ -396,3 +396,51 @@ async def test_run_agent_hook_deny_blocks_tool(monkeypatch, tmp_path):
     assert dispatch_called["n"] == 0, "hook deny did not stop dispatch"
     hook_events = [e for e in events if e.get("type") == "hook"]
     assert hook_events, "no hook SSE event emitted"
+
+
+@pytest.mark.asyncio
+async def test_plan_nudge_when_plan_only_round_yields_no_followup(monkeypatch, tmp_path):
+    """Regression for Bug 1 (plan-tool early end_turn).
+
+    When the model emits exactly one `plan` tool_call and then a zero-tool
+    follow-up turn, the loop must NOT return done. It should emit a
+    plan_nudge SSE event and feed a follow-up user prompt so the model
+    actually executes the next plan step.
+    """
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+
+    # Stub plan handler so it returns success without touching SQLite.
+    import agent_runtime as _ar
+    monkeypatch.setattr(_ar, "_handle_plan", lambda sid, args: ("success", "ok"))
+    monkeypatch.setattr(_ar, "_load_plan", lambda sid: {"items": [{"text": "step1", "status": "in_progress"}]})
+
+    fake = _stream(
+        # turn 1: plan tool only
+        [
+            (
+                "toolUseEvent",
+                {
+                    "toolUseId": "tu_plan",
+                    "name": "plan",
+                    "input": json.dumps({"op": "set", "items": ["step1"]}),
+                    "stop": True,
+                },
+            ),
+        ],
+        # turn 2: nothing — model ends turn with no tools and short text
+        [
+            ("assistantResponseEvent", {"content": "ok", "messageId": "m2"}),
+        ],
+        # turn 3: AFTER the nudge, model finally executes a real tool then stops
+        [
+            ("assistantResponseEvent", {"content": "doing it", "messageId": "m3"}),
+        ],
+    )
+    with patch.object(q_client, "stream_q", fake):
+        events = await _collect(ar.run_agent("k", "do thing", session_id="unit_plannudge"))
+
+    nudges = [e for e in events if e.get("type") == "plan_nudge"]
+    assert nudges, f"expected plan_nudge SSE event, got: {[e.get('type') for e in events]}"
+    # Loop must reach a done event (not an error) only after the third turn.
+    dones = [e for e in events if e.get("type") == "done"]
+    assert dones, "no done event after nudge cycle"
