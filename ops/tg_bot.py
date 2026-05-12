@@ -12,9 +12,14 @@ Required env:
   KIRA_AUTH_TOKEN       - Kira bearer token
 
 Optional:
-  KIRA_TG_MODEL         - default model (default: claude-haiku-4.5)
-  KIRA_TG_CHUNK_LEN     - chars per TG message (default: 3900; TG hard cap=4096)
-  KIRA_TG_PARSE_MODE    - 'Markdown' (default), 'MarkdownV2', or '' (off)
+  KIRA_TG_MODEL          - default model (default: claude-haiku-4.5)
+  KIRA_TG_CHUNK_LEN      - chars per TG message (default: 3900; TG hard cap=4096)
+  KIRA_TG_PARSE_MODE     - 'Markdown' (default), 'MarkdownV2', or '' (off)
+  KIRA_TG_MAX_IMAGE_MB   - reject images larger than this (default: 8)
+  KIRA_TG_MAX_AUDIO_SEC  - reject voice longer than this (default: 300)
+  KIRA_TG_WHISPER        - 'faster-whisper' | 'groq' | '' (default: '' = disabled)
+  KIRA_TG_WHISPER_MODEL  - faster-whisper model size (default: 'tiny')
+  KIRA_TG_GROQ_API_KEY   - Groq API key (when KIRA_TG_WHISPER=groq)
 """
 from __future__ import annotations
 import asyncio
@@ -42,6 +47,11 @@ CHUNK_LEN = int(os.environ.get("KIRA_TG_CHUNK_LEN", "3900"))
 # Legacy 'Markdown' is more forgiving than MarkdownV2 (no need to escape
 # every '.', '!', '-'). We try parse_mode first, fall back to plain text on 400.
 PARSE_MODE = os.environ.get("KIRA_TG_PARSE_MODE", "Markdown")
+MAX_IMAGE_MB = float(os.environ.get("KIRA_TG_MAX_IMAGE_MB", "8"))
+MAX_AUDIO_SEC = int(os.environ.get("KIRA_TG_MAX_AUDIO_SEC", "300"))
+WHISPER_BACKEND = os.environ.get("KIRA_TG_WHISPER", "").strip()
+WHISPER_MODEL = os.environ.get("KIRA_TG_WHISPER_MODEL", "tiny")
+GROQ_API_KEY = os.environ.get("KIRA_TG_GROQ_API_KEY", "")
 TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # user_id -> session_id (one persistent kira session per user)
@@ -190,6 +200,163 @@ async def send_typing(http, chat_id: int) -> None:
     await tg(http, "sendChatAction", chat_id=chat_id, action="typing")
 
 
+# ---------------------------------------------------------------------------
+# Media: photo + voice download/transcription
+# ---------------------------------------------------------------------------
+
+
+async def tg_get_file_url(http, file_id: str) -> Optional[str]:
+    """Resolve a Telegram file_id to a downloadable URL."""
+    res = await tg(http, "getFile", file_id=file_id)
+    if not res.get("ok"):
+        log.error("getFile failed: %s", res)
+        return None
+    path = res["result"]["file_path"]
+    return f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}"
+
+
+async def download_bytes(http, url: str, max_bytes: int) -> Optional[bytes]:
+    r = await http.get(url, timeout=60)
+    if r.status_code != 200:
+        log.warning("download %s: HTTP %s", url, r.status_code)
+        return None
+    if len(r.content) > max_bytes:
+        return None
+    return r.content
+
+
+def detect_image_format(blob: bytes) -> str:
+    """Heuristic file-type detection so Kira's /agent gets the right `format`."""
+    if blob[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if blob[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if blob[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
+        return "webp"
+    return "png"  # safe default
+
+
+async def extract_image(http, msg: dict) -> Optional[dict]:
+    """Pull the largest available photo and return Kira's image dict.
+
+    Returns {format, data_base64} matching what app.py /agent expects, or
+    None if no usable image is attached / too large.
+    """
+    import base64
+
+    photos = msg.get("photo") or []
+    file_id = None
+    if photos:
+        # TG sends multiple resolutions; pick the largest.
+        file_id = max(photos, key=lambda p: p.get("file_size", 0)).get("file_id")
+    elif (doc := msg.get("document")):
+        mime = (doc.get("mime_type") or "").lower()
+        if mime.startswith("image/"):
+            file_id = doc.get("file_id")
+    if not file_id:
+        return None
+    url = await tg_get_file_url(http, file_id)
+    if not url:
+        return None
+    blob = await download_bytes(http, url, int(MAX_IMAGE_MB * 1024 * 1024))
+    if blob is None:
+        return None
+    return {
+        "format": detect_image_format(blob),
+        "data_base64": base64.b64encode(blob).decode("ascii"),
+    }
+
+
+_whisper_model = None  # lazy-loaded faster-whisper model singleton
+
+
+async def _transcribe_local(blob: bytes) -> Optional[str]:
+    """Run faster-whisper on an audio blob (Opus/OGG from TG voice messages)."""
+    global _whisper_model
+    import tempfile
+
+    try:
+        if _whisper_model is None:
+            from faster_whisper import WhisperModel  # type: ignore
+
+            log.info("loading faster-whisper model: %s", WHISPER_MODEL)
+            _whisper_model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    except ImportError:
+        log.error("faster-whisper not installed; set KIRA_TG_WHISPER='' or pip install faster-whisper")
+        return None
+
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+        f.write(blob)
+        path = f.name
+    try:
+        loop = asyncio.get_running_loop()
+        segments, _info = await loop.run_in_executor(
+            None, lambda: _whisper_model.transcribe(path, beam_size=1)
+        )
+        text = " ".join(s.text.strip() for s in segments).strip()
+        return text or None
+    except Exception as e:
+        log.exception("local transcription failed: %s", e)
+        return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+async def _transcribe_groq(http, blob: bytes) -> Optional[str]:
+    """Groq Whisper API (free tier). Audio sent as multipart/form-data."""
+    if not GROQ_API_KEY:
+        log.error("KIRA_TG_GROQ_API_KEY not set")
+        return None
+    try:
+        files = {"file": ("voice.ogg", blob, "audio/ogg")}
+        data = {"model": "whisper-large-v3-turbo"}
+        r = await http.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            files=files, data=data, timeout=60,
+        )
+        if r.status_code != 200:
+            log.warning("groq transcribe: HTTP %s: %s", r.status_code, r.text[:200])
+            return None
+        return (r.json().get("text") or "").strip() or None
+    except Exception as e:
+        log.exception("groq transcribe failed: %s", e)
+        return None
+
+
+async def extract_voice_text(http, msg: dict) -> Optional[str]:
+    """Download voice/audio from TG and return transcribed text.
+
+    Returns None if transcription is disabled, audio too long, or backend
+    failed. The caller surfaces this back to the user.
+    """
+    voice = msg.get("voice") or msg.get("audio")
+    if not voice:
+        return None
+    if not WHISPER_BACKEND:
+        return None
+    dur = int(voice.get("duration", 0))
+    if dur > MAX_AUDIO_SEC:
+        return f"[voice too long: {dur}s > {MAX_AUDIO_SEC}s]"
+    url = await tg_get_file_url(http, voice["file_id"])
+    if not url:
+        return None
+    blob = await download_bytes(http, url, 25 * 1024 * 1024)  # TG voice cap is 1MB-ish anyway
+    if blob is None:
+        return None
+    if WHISPER_BACKEND == "groq":
+        return await _transcribe_groq(http, blob)
+    if WHISPER_BACKEND == "faster-whisper":
+        return await _transcribe_local(blob)
+    log.warning("unknown KIRA_TG_WHISPER backend: %r", WHISPER_BACKEND)
+    return None
+
+
 def parse_sse_line(line: str) -> Optional[dict]:
     if not line.startswith("data: "):
         return None
@@ -205,23 +372,63 @@ def parse_sse_line(line: str) -> Optional[dict]:
 async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
     user_id = msg["from"]["id"]
     chat_id = msg["chat"]["id"]
-    text = (msg.get("text") or "").strip()
-    if not text:
-        return
+    # Text can come from .text (regular), .caption (photo with caption),
+    # or transcribed voice. Photos may arrive caption-less.
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+
     if user_id not in ALLOWED:
-        await send_message(http, chat_id, "⛔️ Access denied.")
+        await send_message(http, chat_id, "⛔️ Access denied.", allow_markdown=False)
+        return
+
+    # Voice / audio → transcribe, prepend to text (or use as text if empty).
+    if msg.get("voice") or msg.get("audio"):
+        await send_typing(http, chat_id)
+        transcript = await extract_voice_text(http, msg)
+        if transcript is None:
+            if not WHISPER_BACKEND:
+                await send_message(http, chat_id,
+                    "🎤 Voice transcription is disabled. Set KIRA_TG_WHISPER on the bot.",
+                    allow_markdown=False)
+                return
+            await send_message(http, chat_id, "❌ Failed to transcribe voice.",
+                               allow_markdown=False)
+            return
+        if transcript.startswith("[voice too long"):
+            await send_message(http, chat_id, f"❌ {transcript}", allow_markdown=False)
+            return
+        # Show what we heard, then continue as if the user had typed it.
+        await send_message(http, chat_id, f"🎤 _{transcript}_",
+                           reply_to=msg["message_id"])
+        text = (text + "\n" + transcript).strip() if text else transcript
+
+    # Photo / image document → attach as multimodal input.
+    image_attachment: Optional[dict] = None
+    if msg.get("photo") or (msg.get("document") or {}).get("mime_type", "").startswith("image/"):
+        image_attachment = await extract_image(http, msg)
+        if image_attachment is None:
+            await send_message(http, chat_id,
+                f"❌ Image rejected (too large > {MAX_IMAGE_MB}MB or unreadable).",
+                allow_markdown=False)
+            return
+        if not text:
+            text = "What's in this image?"
+
+    if not text:
         return
 
     # commands
     if text.startswith("/start"):
+        whisper_line = "⚫ Voice transcription: off" if not WHISPER_BACKEND \
+            else f"✅ Voice transcription: {WHISPER_BACKEND}"
         await send_message(
             http, chat_id,
-            "🌸 Кира — self-modifying AI agent.\n\n"
-            "Просто напиши вопрос — отвечу.\n\n"
+            "🌸 *Кира* — self-modifying AI agent.\n\n"
+            "Напиши, пришли фото или голосовое — отвечу.\n\n"
+            "📷 Фото: опишу что на картинке (caption опционален).\n"
+            f"🎤 Голос: распознаю речь. {whisper_line}\n\n"
             "Команды:\n"
             "/new — новая сессия\n"
             "/status — здоровье сервиса\n"
-            "/model <name> — сменить модель\n"
         )
         return
     if text.startswith("/new"):
@@ -261,6 +468,8 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
     body = {"prompt": text, "model": model}
     if sid:
         body["session_id"] = sid
+    if image_attachment is not None:
+        body["images"] = [image_attachment]
 
     accumulated = ""
     last_edit = 0.0
