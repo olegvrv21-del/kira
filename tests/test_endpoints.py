@@ -66,6 +66,16 @@ def test_static_tool_cards_js_served(app_client):
     assert "diff-rb" in body  # rollback button class kept
 
 
+def test_static_sessions_js_served(app_client):
+    """Phase 4b extracted server-side agent-session list/budget/restore."""
+    r = app_client.get("/static/sessions.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "createAgentSessions" in body
+    assert "/agent/sessions" in body  # the endpoint it owns
+    assert "refreshAgentBudget" in body
+
+
 def test_tool_specs_include_new_tools():
     import json
     from pathlib import Path
