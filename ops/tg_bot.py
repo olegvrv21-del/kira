@@ -41,6 +41,10 @@ BOT_TOKEN = os.environ["KIRA_TG_BOT_TOKEN"]
 ALLOWED = {int(x) for x in os.environ["KIRA_TG_ALLOWED_USERS"].split(",") if x.strip()}
 KIRA_URL = os.environ.get("KIRA_URL", "http://localhost:3000").rstrip("/")
 KIRA_TOKEN = os.environ.get("KIRA_AUTH_TOKEN", "")
+# When set, the bot derives a per-TG-user bearer token using HMAC so each
+# Telegram user gets their own Kira session, quotas and history. The matching
+# secret must live on the Kira server as KIRA_TG_DERIVE_SECRET.
+TG_DERIVE_SECRET = os.environ.get("KIRA_TG_DERIVE_SECRET", "").strip()
 MODEL_DEFAULT = os.environ.get("KIRA_TG_MODEL", "claude-haiku-4.5")
 # Per TG message; hard cap is 4096. Leave headroom for the tools-used header.
 CHUNK_LEN = int(os.environ.get("KIRA_TG_CHUNK_LEN", "3900"))
@@ -56,6 +60,29 @@ TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # user_id -> session_id (one persistent kira session per user)
 USER_SESSIONS: dict[int, str] = {}
+# Cache of derived per-user bearer tokens. Deterministic, so a cold start
+# yields the same tokens — but we cache to skip HMAC on every message.
+_USER_TOKENS: dict[int, str] = {}
+
+
+def token_for(user_id: int) -> str:
+    """Return the bearer token to use when talking to Kira on behalf of .
+
+    Falls back to the shared KIRA_AUTH_TOKEN when no derive secret is set so
+    a single-user deployment keeps working unchanged.
+    """
+    if not TG_DERIVE_SECRET:
+        return KIRA_TOKEN
+    tok = _USER_TOKENS.get(user_id)
+    if tok:
+        return tok
+    import hmac, hashlib
+    tag = hmac.new(TG_DERIVE_SECRET.encode("utf-8"),
+                   str(user_id).encode("utf-8"),
+                   hashlib.sha256).hexdigest()[:16]
+    tok = f"ktk_tg_{user_id}_{tag}"
+    _USER_TOKENS[user_id] = tok
+    return tok
 
 
 async def tg(http: httpx.AsyncClient, method: str, **params) -> dict:
@@ -437,9 +464,10 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
         return
     if text.startswith("/status"):
         try:
+            user_tok = token_for(user_id)
             r = await http.get(
                 f"{KIRA_URL}/agent/health",
-                headers={"Authorization": f"Bearer {KIRA_TOKEN}"} if KIRA_TOKEN else {},
+                headers={"Authorization": f"Bearer {user_tok}"} if user_tok else {},
                 timeout=10,
             )
             data = r.json()
@@ -488,8 +516,9 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
 
     try:
         headers = {"Accept": "text/event-stream"}
-        if KIRA_TOKEN:
-            headers["Authorization"] = f"Bearer {KIRA_TOKEN}"
+        user_tok = token_for(user_id)
+        if user_tok:
+            headers["Authorization"] = f"Bearer {user_tok}"
         async with http.stream(
             "POST", f"{KIRA_URL}/agent", json=body, headers=headers, timeout=300
         ) as r:
@@ -534,7 +563,10 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
 
 async def main():
     log.info("Kira TG bot starting. Allowed users: %s", ALLOWED)
-    log.info("Kira URL: %s (token=%s)", KIRA_URL, "set" if KIRA_TOKEN else "none")
+    log.info("Kira URL: %s (token=%s, per-user-derived=%s)",
+             KIRA_URL,
+             "set" if KIRA_TOKEN else "none",
+             "yes" if TG_DERIVE_SECRET else "no")
     offset = 0
     async with httpx.AsyncClient() as http:
         # set bot commands (visible in TG menu)

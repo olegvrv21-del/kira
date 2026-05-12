@@ -32,6 +32,45 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 ANON_USER_ID = "anon"
 
+TG_TOKEN_PREFIX = "ktk_tg_"
+
+
+def derive_tg_token(tg_user_id: int | str, secret: str) -> str:
+    """Deterministically derive a per-user Telegram bearer token.
+
+    Format: 'ktk_tg_<tg_user_id>_<hmac16hex>'. The HMAC binds the token to a
+    server-side secret so leaked tokens for one user can be invalidated by
+    rotating the secret. user_id_from_token(token) yields a stable per-user
+    identifier so quotas, sessions and history isolate automatically.
+    """
+    import hmac
+    if not secret:
+        raise ValueError("derive_tg_token: empty secret")
+    tag = hmac.new(secret.encode("utf-8"), str(tg_user_id).encode("utf-8"),
+                   hashlib.sha256).hexdigest()[:16]
+    return f"{TG_TOKEN_PREFIX}{tg_user_id}_{tag}"
+
+
+def verify_tg_token(token: str, secret: str) -> int | None:
+    """Validate a derived TG token. Returns the tg_user_id on success."""
+    import hmac
+    if not token or not secret or not token.startswith(TG_TOKEN_PREFIX):
+        return None
+    rest = token[len(TG_TOKEN_PREFIX):]
+    if "_" not in rest:
+        return None
+    uid_str, tag = rest.rsplit("_", 1)
+    if not uid_str or len(tag) != 16:
+        return None
+    expected = hmac.new(secret.encode("utf-8"), uid_str.encode("utf-8"),
+                        hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(expected, tag):
+        return None
+    try:
+        return int(uid_str)
+    except ValueError:
+        return None
+
 
 def user_id_from_token(token: str | None) -> str:
     """Deterministic per-token user identifier. Same token -> same user_id.
@@ -109,11 +148,15 @@ class _Limiter:
 
 
 class AuthRateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, tokens: Iterable[str], public_prefixes: Iterable[str], limiter: _Limiter):
+    def __init__(self, app, tokens: Iterable[str], public_prefixes: Iterable[str],
+                 limiter: _Limiter, tg_secret: str = "",
+                 tg_allowed_users: Iterable[int] = ()):
         super().__init__(app)
         self.tokens = tuple(tokens)
         self.public = tuple(public_prefixes)
         self.limiter = limiter
+        self.tg_secret = tg_secret
+        self.tg_allowed_users = frozenset(tg_allowed_users)
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -121,7 +164,14 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         # ---- bearer auth ----
         token = self._extract_token(request)
         if self.tokens and not self._is_public(path):
-            if token not in self.tokens:
+            ok = token in self.tokens
+            if not ok and self.tg_secret and token:
+                tg_uid = verify_tg_token(token, self.tg_secret)
+                if tg_uid is not None and (
+                    not self.tg_allowed_users or tg_uid in self.tg_allowed_users
+                ):
+                    ok = True
+            if not ok:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
         # Stamp user_id for downstream handlers (always — works whether auth
         # is on or off; off => everyone is `anon`, same token => same user).
@@ -175,7 +225,15 @@ def build_middleware() -> tuple[type[AuthRateLimitMiddleware] | None, dict]:
     limit = int(os.environ.get("KIRA_RATE_LIMIT") or 60)
     window = float(os.environ.get("KIRA_RATE_WINDOW") or 60)
     limiter = _Limiter(limit, window)
-    auth_on = bool(tokens)
+    tg_secret = os.environ.get("KIRA_TG_DERIVE_SECRET", "").strip()
+    tg_allowed: tuple[int, ...] = ()
+    raw_allow = os.environ.get("KIRA_TG_ALLOWED_USERS", "").strip()
+    if raw_allow:
+        try:
+            tg_allowed = tuple(int(x) for x in raw_allow.split(",") if x.strip())
+        except ValueError:
+            tg_allowed = ()
+    auth_on = bool(tokens) or bool(tg_secret)
     rl_on = limit > 0
     if not auth_on and not rl_on:
         return None, {}
@@ -183,6 +241,8 @@ def build_middleware() -> tuple[type[AuthRateLimitMiddleware] | None, dict]:
         "tokens": tokens,
         "public_prefixes": tuple(_DEFAULT_PUBLIC) + public_extra,
         "limiter": limiter,
+        "tg_secret": tg_secret,
+        "tg_allowed_users": tg_allowed,
     }
 
 
@@ -200,8 +260,10 @@ def install(app) -> dict:
     app.add_middleware(cls, **kwargs)
     _GLOBAL_LIMITER = kwargs["limiter"]
     return {
-        "auth": bool(kwargs["tokens"]),
+        "auth": bool(kwargs["tokens"]) or bool(kwargs.get("tg_secret")),
         "tokens_configured": len(kwargs["tokens"]),
+        "tg_derived": bool(kwargs.get("tg_secret")),
+        "tg_allowed_users": len(kwargs.get("tg_allowed_users") or ()),
         "public_prefixes": list(kwargs["public_prefixes"]),
         "rate_limit": kwargs["limiter"].limit > 0,
         "limit_per_window": kwargs["limiter"].limit,
