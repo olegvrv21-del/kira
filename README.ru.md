@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-703-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-710-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
 </p>
 
@@ -88,9 +88,13 @@
   сессии, планы, кредиты, файлы и `/agent` изолированы по владельцу.
   Legacy NULL-owner рекорды видны всем, пока не claim-нутся при первом
   авторизованном save.
-- **LLM provider abstraction** (`llm/`) — `base.py` (Message / ToolCall /
-  StreamEvent / `LLMProvider` protocol) + `q_provider.py` + `mock_provider.py`,
-  выбор через `KIRA_LLM_PROVIDER`. Vendor lock-in на Amazon Q сломан.
+- **LLM provider abstraction** (`llm/`) — см. [`llm/README.md`](llm/README.md).
+  `base.py` (Message / ToolCall / StreamEvent / `LLMProvider` protocol) +
+  `q_provider.py` (с би-конвертерами Q-dict↔Message[]) +
+  `mock_provider.py`, выбор через `KIRA_LLM_PROVIDER`. Весь runtime
+  (`run_agent`, `_llm_one_shot`, `_run_subagent_silent`) работает на канонических
+  сообщениях — vendor lock-in сломан. Добавить провайдера = вписать
+  `<vendor>_provider.py`, runtime не трогаем.
 - **Push-to-prod CD** — `.github/workflows/deploy.yml`: push в `main` → rsync
   по SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `/healthz`
   → TG-alert при ошибке. Латенси ~50с.
@@ -111,7 +115,7 @@ index.html            # frontend
 q_client.py           # Kiro Q API client
 ops/                  # systemd units, backup.sh
 skills/               # markdown playbooks
-tests/                # 703 pytest + smoke script
+tests/                # 710 pytest + smoke script
 ```
 
 ## Quick start
@@ -158,14 +162,14 @@ docker build -t kira-sandbox:latest sandbox/
 ## Tests
 
 ```bash
-make test    # 703 pytest
+make test    # 710 pytest
 make smoke   # live HTTP-проверки против живого сервиса
 make all     # both
 ```
 
 ## Status
 
-Production-grade. 703 теста при ~94% покрытии, CI зелён, push-to-prod CD
+Production-grade. 710 тестов при ~94% покрытии, CI зелён, push-to-prod CD
 живой, развёрнута на disk-photon.exe.xyz. LLM provider abstraction готова;
 multi-user lite в проде; Telegram-фронтенд с markdown + photo + voice.
 Дальше: реальная LSP-интеграция (pyright + typescript-language-server)

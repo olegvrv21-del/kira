@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-703-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-710-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
 </p>
@@ -48,7 +48,7 @@ Docker sandboxes.
 | **Key pool & cost caps** | ✅ rotation, ban-lists, forecast | ❌                                   |
 | **Observability**        | ✅ `/agent/health`                | ❌                                   |
 | **Branding & UX**        | RU/EN UI, animated avatar        | bare-bones                           |
-| **Tests / Coverage**     | **703 tests, ~94%**              | varies                               |
+| **Tests / Coverage**     | **710 tests, ~94%**              | varies                               |
 | **LLM provider abstraction** | ✅ pluggable (Q today, others ready) | partial               |
 | **Multi-user (lite)**    | ✅ per-token session isolation    | partial                              |
 | **Telegram frontend**    | ✅ markdown + photo + voice       | varies                               |
@@ -112,10 +112,13 @@ Docker sandboxes.
 - **Multi-user (lite)** — bearer token → `sha256(token)[:12] = user_id`; every
   session, plan, credit counter, uploaded file, and `/agent` call is scoped by
   owner. Legacy NULL-owner rows stay visible until first authed save claims them.
-- **LLM provider abstraction** (`llm/`) — `base.py` (Message / ToolCall /
-  StreamEvent / `LLMProvider` protocol) + `q_provider.py` + `mock_provider.py`,
-  selectable via `KIRA_LLM_PROVIDER`. Swappable backends; Amazon Q vendor
-  lock-in is broken.
+- **LLM provider abstraction** (`llm/`) — see [`llm/README.md`](llm/README.md).
+  `base.py` (Message / ToolCall / StreamEvent / `LLMProvider` protocol) +
+  `q_provider.py` (with bidirectional Q-dict↔Message[] converters) +
+  `mock_provider.py`, selectable via `KIRA_LLM_PROVIDER`. The entire runtime
+  (`run_agent`, `_llm_one_shot`, `_run_subagent_silent`) operates on canonical
+  messages — vendor lock-in is broken. Adding a new provider = drop in
+  `<vendor>_provider.py`, no runtime changes.
 - **Push-to-prod CD** — `.github/workflows/deploy.yml`: push to `main` → rsync
   over SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `/healthz`
   → TG alert on failure. ~50s latency, fully automated.
@@ -183,14 +186,14 @@ See `.env.example` — every environment variable is documented there.
 ## Tests
 
 ```bash
-make test    # pytest suite (703 tests)
+make test    # pytest suite (710 tests)
 make smoke   # live HTTP checks against running service
 make all     # both
 ```
 
 ## Status
 
-Production-grade. 703 tests at ~94% coverage, CI green, push-to-prod CD active,
+Production-grade. 710 tests at ~94% coverage, CI green, push-to-prod CD active,
 deployed on disk-photon.exe.xyz. LLM provider abstraction complete; multi-user
 lite live; Telegram frontend supports markdown + image + voice. Next: real LSP
 integration (pyright + typescript-language-server) and further frontend
