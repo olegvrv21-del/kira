@@ -176,11 +176,18 @@ def toolspecs_from_openai_json(specs: list[dict]) -> list[ToolSpec]:
     for s in specs:
         # Several shapes seen in the wild:
         #   {"type":"function","function":{"name":..,"description":..,"parameters":..}}
-        #   {"name":..,"description":..,"inputSchema":..}        (Bedrock/Anthropic-ish)
+        #   {"name":..,"description":..,"inputSchema":..}            (Bedrock/Anthropic-ish)
         #   {"toolSpec":{"name":..,"description":..,"inputSchema":{"json":..}}}
+        #   {"toolSpecification":{...}}                                (Kira's on-disk format)
         if "function" in s and isinstance(s["function"], dict):
             f = s["function"]
             out.append(ToolSpec(f["name"], f.get("description", ""), f.get("parameters", {})))
+        elif "toolSpecification" in s and isinstance(s["toolSpecification"], dict):
+            ts = s["toolSpecification"]
+            schema = ts.get("inputSchema", {})
+            if isinstance(schema, dict) and "json" in schema:
+                schema = schema["json"]
+            out.append(ToolSpec(ts["name"], ts.get("description", ""), schema or {}))
         elif "toolSpec" in s and isinstance(s["toolSpec"], dict):
             ts = s["toolSpec"]
             schema = ts.get("inputSchema", {})

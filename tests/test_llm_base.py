@@ -152,3 +152,50 @@ def test_protocol_runtime_check():
             return {}
 
     assert isinstance(_Stub(), LLMProvider)
+
+
+def test_toolspecs_from_openai_json_handles_kira_on_disk_format():
+    """Regression for Phase 3c.2: agent_tool_specs.json uses the key
+    'toolSpecification' (singular 'toolSpec' was already handled), and we
+    must parse it or run_agent ships zero tools to the LLM — which makes
+    Claude just chat instead of using fs_write / patch / etc.
+    """
+    from llm.base import toolspecs_from_openai_json
+
+    sample = [
+        {
+            "toolSpecification": {
+                "name": "execute_bash",
+                "description": "Run bash",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    }
+                },
+            }
+        }
+    ]
+    parsed = toolspecs_from_openai_json(sample)
+    assert len(parsed) == 1
+    assert parsed[0].name == "execute_bash"
+    assert parsed[0].description == "Run bash"
+    assert parsed[0].parameters.get("type") == "object"
+
+
+def test_toolspecs_parses_real_kira_specs_file():
+    """Sanity-check that the actual on-disk specs file parses to >30 tools."""
+    import json
+    import pathlib
+
+    from llm.base import toolspecs_from_openai_json
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    specs = json.loads((root / "agent_tool_specs.json").read_text())
+    canon = toolspecs_from_openai_json(specs)
+    # We have 38 tools right now; allow some drift but catch a "0 tools" regression.
+    assert len(canon) >= 30, f"only {len(canon)} tools parsed — toolSpecification key broken?"
+    names = {t.name for t in canon}
+    assert "execute_bash" in names
+    assert "fs_write" in names
+    assert "patch" in names
