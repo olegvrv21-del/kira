@@ -447,6 +447,7 @@ installFetchInterceptor();
     });
 
     let agentAbort = null;
+    let chatAbort = null;
     function setSendBtnMode(stop) {
       // swap the icon between paper-plane and square
       sendBtn.innerHTML = stop
@@ -488,6 +489,7 @@ installFetchInterceptor();
           fetch('/agent/stop/' + agentSessionId, { method: 'POST' }).catch(() => {});
         }
         if (agentAbort) { agentAbort.abort(); }
+        if (chatAbort) { try { chatAbort.abort(); } catch (_) {} }
         return;
       }
       const text = input.value.trim();
@@ -505,7 +507,7 @@ installFetchInterceptor();
         for (const f of filesSnapshot) if (f.text != null) agentText += `\n\n[file: ${f.name}]\n${f.text}`;
         return sendAgent(agentText, imgs);
       }
-      streaming = true; sendBtn.disabled = true;
+      streaming = true; setSendBtnMode(true); chatAbort = new AbortController();
       const filesSnapshot = getPendingFiles().slice();
       const apiContent = buildUserContent(text, filesSnapshot);
       history.push({ role: 'user', content: apiContent });
@@ -527,6 +529,7 @@ installFetchInterceptor();
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history, model: currentModel }),
+          signal: chatAbort.signal,
         });
         if (!r.ok) {
           const err = await r.text();
@@ -566,7 +569,7 @@ installFetchInterceptor();
         if (!asst.txt.textContent) { asst.txt.textContent = `${t('error_prefix')}: ` + err.message; asst.wrap.classList.add('error'); }
       } finally {
         asst.wrap.classList.remove('typing');
-        streaming = false; sendBtn.disabled = false; input.focus();
+        streaming = false; setSendBtnMode(false); chatAbort = null; sendBtn.disabled = false; input.focus();
       }
     });
 
