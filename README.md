@@ -25,6 +25,16 @@
 между сессиями. Работает как FastAPI-сервис, общается с [Kiro Q](https://kiro.dev/)
 по HTTPS и поднимает чат-UI с 29 инструментами в Docker-песочнице.
 
+## Screenshots
+
+<table>
+<tr>
+  <td align="center" width="33%"><img src="assets/screenshots/01-main.png" alt="Chat" /><br/><sub><b>Чат</b> — брендированный UI, двуязычный, с пульсирующей аватаркой</sub></td>
+  <td align="center" width="33%"><img src="assets/screenshots/04-models.png" alt="Models" /><br/><sub><b>Модели</b> — выбор LLM с ценовыми множителями и тегами задач</sub></td>
+  <td align="center" width="33%"><img src="assets/screenshots/03-skills.png" alt="Skills" /><br/><sub><b>Skills</b> — подключаемые playbooks для специфичных доменов</sub></td>
+</tr>
+</table>
+
 ## Stack
 
 - **Backend**: FastAPI + uvicorn (Python 3.11+)

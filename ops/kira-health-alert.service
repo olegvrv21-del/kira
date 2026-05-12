@@ -1,0 +1,9 @@
+[Unit]
+Description=Kira /agent/health poller -> Telegram alerts
+After=network-online.target webchat.service
+
+[Service]
+Type=oneshot
+User=exedev
+EnvironmentFile=/etc/kira/health_alert.env
+ExecStart=/home/exedev/webchat/ops/health_alert.sh
