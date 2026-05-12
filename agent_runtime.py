@@ -25,7 +25,9 @@ from typing import Any
 
 import agent_hooks
 import agent_skills
-import q_client
+# Phase 3d: q_client is no longer imported here directly. All Q HTTP goes
+# through llm/q_provider.py. Tests still mock q_client.stream_q at the
+# module level (that module is imported by QProvider lazily).
 from agent_keys import key_pool
 
 # Optional cost-limit hook installed by app.py. Signature:
