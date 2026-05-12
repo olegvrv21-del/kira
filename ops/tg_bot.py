@@ -178,14 +178,18 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
                     sid = ev.get("session_id")
                     if sid:
                         USER_SESSIONS[user_id] = sid
-                elif t == "delta":
-                    accumulated += ev.get("text") or ev.get("delta") or ""
+                elif t in ("text", "delta"):
+                    accumulated += ev.get("delta") or ev.get("text") or ""
                     await maybe_edit()
-                elif t == "tool":
+                elif t in ("tool", "tool_use", "tool_call"):
                     name = ev.get("name") or ev.get("tool") or "?"
-                    tools_used.append(name)
+                    if name and name not in tools_used:
+                        tools_used.append(name)
                     await send_typing(http, chat_id)
                     await maybe_edit()
+                elif t == "tool_result":
+                    # tool finished, refresh typing
+                    await send_typing(http, chat_id)
                 elif t == "error":
                     accumulated += f"\n❌ {ev.get('message')}"
                     await maybe_edit(force=True)
