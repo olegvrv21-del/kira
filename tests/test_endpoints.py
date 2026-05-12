@@ -43,6 +43,17 @@ def test_static_app_js_served(app_client):
     body = r.text
     assert "applyModel(" in body
     assert "setModel(" not in body  # no broken legacy ref
+    # The agent SSE handler (incl. the iframe branch) moved into agent_sse.js
+    # in phase 3. app.js should now reference the module instead.
+    assert "createAgentRunner" in body
+
+
+def test_static_agent_sse_js_served(app_client):
+    """Phase 3 extracted the SSE event loop into its own module."""
+    r = app_client.get("/static/agent_sse.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "createAgentRunner" in body
     assert "type === 'iframe'" in body  # iframe handler shipped
 
 
