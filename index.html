@@ -300,6 +300,15 @@
     background: linear-gradient(135deg, var(--orange) 0%, var(--accent-soft) 100%);
     -webkit-background-clip: text; background-clip: text;
   }
+  .brand-mark {
+    width: 28px; height: 28px; border-radius: 50%;
+    object-fit: cover; flex: 0 0 auto;
+    border: 1px solid var(--border);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 2px 8px rgba(0,0,0,0.4);
+    transition: filter .2s ease, transform .2s ease;
+  }
+  .brand-mark:hover { filter: brightness(1.15) saturate(1.2); transform: scale(1.05); }
+  @media (max-width: 768px) { .brand-mark { width: 24px; height: 24px; } }
   .topbar .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-weight: 500; }
   .lang-toggle {
     display: inline-flex; align-items: center;
@@ -794,6 +803,7 @@
           <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
         </svg>
       </button>
+      <img class="brand-mark" src="/static/brand-mark.jpg" alt="К" />
       <h1>КИРА</h1>
       <span class="meta" id="chat-title" data-i18n="new_chat">Новый чат</span>
       <span class="meta" id="agent-budget" style="display:none;color:#888;"></span>
