@@ -1,10 +1,26 @@
-# Кира
+<p align="center">
+  <img src="assets/kira-hero.jpg" alt="Кира" width="420" />
+</p>
 
-[![CI](https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg)](https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml)
+<h1 align="center">🌸 Кира</h1>
 
-Self-modifying web UI for the [Kiro Q](https://kiro.dev/) coding agent.
-Кира runs as a FastAPI service, talks to Q over HTTPS, and exposes a chat UI
-where the model can use tools — including tools that edit Кира's own source code.
+<p align="center">
+  <i>самомодифицирующийся AI-агент с веб-интерфейсом, sandbox и долговременной памятью</i>
+</p>
+
+<p align="center">
+  <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/coverage-93.5%25-brightgreen" alt="coverage" />
+  <img src="https://img.shields.io/badge/tests-646-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
+</p>
+
+---
+
+Кира — это полноценный AI-агент, который умеет редактировать собственный
+исходный код, гонять тесты, коммитить, ходить в браузер и помнить контекст
+между сессиями. Работает как FastAPI-сервис, общается с [Kiro Q](https://kiro.dev/)
+по HTTPS и поднимает чат-UI с 29 инструментами в Docker-песочнице.
 
 ## Stack
 
