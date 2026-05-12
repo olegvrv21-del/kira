@@ -70,7 +70,6 @@ def init() -> None:
                 PRIMARY KEY(user_id, day)
             );
             CREATE INDEX IF NOT EXISTS idx_user_credits_day ON user_credits(day);
-            CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS history(
                 sid TEXT,
                 idx INTEGER,
@@ -111,7 +110,8 @@ def init() -> None:
             c.execute("ALTER TABLE sessions ADD COLUMN credits REAL DEFAULT 0")
         if "owner_id" not in cols:
             c.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC)")
+        # Now safe to create the owner_id index (column guaranteed to exist).
+        c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC)")
         acols = {r[1] for r in c.execute("PRAGMA table_info(actions)").fetchall()}
         if acols:
             if "diff" not in acols:
