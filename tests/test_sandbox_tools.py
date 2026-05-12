@@ -1105,6 +1105,22 @@ def test_memory_add_success(monkeypatch):
     assert "f.md" in out and "bytes=12" in out
 
 
+def test_memory_index_does_not_clobber_notebook_dir_on_host(monkeypatch, tmp_path):
+    # Regression: on the host /host/notebook does not exist; the helper must
+    # not force KIRA_NOTEBOOK_DIR there (otherwise memory_add would try to
+    # mkdir /host and fail with EACCES).
+    monkeypatch.delenv("KIRA_NOTEBOOK_DIR", raising=False)
+    monkeypatch.setattr("os.path.isdir", lambda p: False if p == "/host/notebook" else True)
+    # Reset cache so the body actually runs.
+    monkeypatch.setattr(st, "_MEMORY_SINGLETON", None)
+    # Force import to succeed via stub.
+    import sys, types
+    fake = types.SimpleNamespace(memory=object())
+    monkeypatch.setitem(sys.modules, "agent_memory", fake)
+    st._memory_index()
+    assert "KIRA_NOTEBOOK_DIR" not in __import__("os").environ
+
+
 # ---------- coverage_status / load_skill / run_tool ----------
 
 

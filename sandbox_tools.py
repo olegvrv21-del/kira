@@ -1300,7 +1300,11 @@ def _memory_index():
         for p in ("/host/webchat", "/workspace"):
             if p not in sys.path and os.path.isdir(p):
                 sys.path.insert(0, p)
-        os.environ.setdefault("KIRA_NOTEBOOK_DIR", "/host/notebook")
+        # Only override when running inside the sandbox container where
+        # /host/notebook is bind-mounted. On the host, leave the default
+        # (~/notebook) so memory_add does not try to mkdir /host (EACCES).
+        if os.path.isdir("/host/notebook"):
+            os.environ.setdefault("KIRA_NOTEBOOK_DIR", "/host/notebook")
         import agent_memory  # type: ignore
 
         _MEMORY_SINGLETON = agent_memory.memory
