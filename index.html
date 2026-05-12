@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0a0c">
 <title>Кира</title>
 <style>
   :root {
@@ -87,17 +89,39 @@
     body, body.drawer-open { grid-template-columns: 0 1fr !important; }
     .drawer { position: fixed; left: 0; top: 0; height: 100vh; z-index: 100;
               width: 280px; max-width: 85vw;
+              padding-top: env(safe-area-inset-top, 0);
               transform: translateX(-100%); transition: transform .25s ease; }
     body.drawer-open .drawer { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,0.7); }
     body.drawer-open::after {
       content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 90;
     }
     .drawer-inner { width: 100%; }
+    .topbar { padding-top: max(8px, env(safe-area-inset-top)); }
     .topbar h1 { font-size: 16px; }
     .topbar .meta { font-size: 11px; }
-    .composer-wrap { padding: 8px; }
+    .composer-wrap {
+      padding: 8px 8px max(8px, env(safe-area-inset-bottom)) 8px;
+    }
     .msg { max-width: 95%; }
+    /* iOS Safari zooms into <16px inputs on focus; bump to 16 to suppress */
+    textarea, input[type="text"], input[type="password"] { font-size: 16px !important; }
+    /* Apple HIG: 44px minimum tap target */
+    .sq-btn { height: 40px; min-width: 40px; }
+    .chip button { min-width: 32px; min-height: 32px; }
+    .msg-actions button { min-height: 36px; padding: 6px 12px; }
+    /* tool result diffs/JSON: prevent horizontal page scroll, allow inner scroll */
+    pre, code { -webkit-overflow-scrolling: touch; }
+    .msg.assistant pre { font-size: 12.5px; max-width: 100%; }
+    .msg.assistant code { font-size: 12.5px; }
+    /* tables in markdown break the viewport on phones */
+    .msg.assistant table { display: block; overflow-x: auto; max-width: 100%; }
     #agent-budget { display: none !important; } /* save room on mobile */
+    /* fix iOS 100vh quirk: account for url bar collapsing */
+    .content { height: 100dvh; min-height: 100dvh; }
+  }
+  /* remove gray flash on tap (Android/Chrome) */
+  button, a, .chat-item, .session-item, .msg, .tool-head, .diff-head {
+    -webkit-tap-highlight-color: transparent;
   }
 
   .drawer {
@@ -591,6 +615,11 @@
     position: absolute; top: 4px; right: 6px; display: none; gap: 4px;
   }
   .msg.assistant:hover .msg-actions, .msg.user:hover .msg-actions { display: flex; }
+  /* touch devices have no hover -> always show actions; styled muted by default */
+  @media (hover: none) {
+    .msg-actions { display: flex !important; opacity: 0.55; }
+    .msg-actions button { padding: 6px 10px; font-size: 12px; }
+  }
   .msg-actions button {
     background: rgba(20,20,26,0.7); color: var(--muted); border: 1px solid var(--border);
     border-radius: 6px; padding: 2px 7px; cursor: pointer; font-size: 11px;
