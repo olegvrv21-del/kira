@@ -1,4 +1,11 @@
 // Agent SSE driver — POST /agent and stream responses into the chat.
+function _authedFileUrl(sid, rel) {
+  let tok = '';
+  try { tok = localStorage.getItem('kira_auth_token') || ''; } catch (_) {}
+  const q = `?t=${Date.now()}` + (tok ? `&token=${encodeURIComponent(tok)}` : '');
+  return `/agent/file/${sid}/${rel}${q}`;
+}
+
 //
 // Pulled out of app.js phase 3 split. The function is intentionally one
 // giant switch over SSE event types: each event maps 1:1 to a DOM mutation.
@@ -246,7 +253,7 @@ export function createAgentRunner(opts) {
                 const m = (j.output || '').match(/saved to (\S+)/);
                 if (m) {
                   const rel = m[1].replace(/^\/workspace\//, '');
-                  const src = `/agent/file/${state.agentSessionId}/${rel}?t=${Date.now()}`;
+                  const src = _authedFileUrl(state.agentSessionId, rel);
                   const img = document.createElement('img');
                   img.src = src;
                   img.style.maxWidth = '100%';

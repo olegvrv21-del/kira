@@ -79,6 +79,18 @@ def test_auth_allows_with_x_kira_token():
     assert r.status_code == 200
 
 
+def test_auth_allows_with_query_token():
+    """Inline <img>/<a> can only pass auth via ?token=...; middleware must accept it."""
+    app = _make_app({"KIRA_AUTH_TOKEN": "sekret", "KIRA_RATE_LIMIT": "0"})
+    c = TestClient(app)
+    r = c.get("/agent/sessions?token=sekret")
+    assert r.status_code == 200
+    r2 = c.get("/agent/sessions?token=wrong")
+    assert r2.status_code == 401
+    r3 = c.get("/agent/sessions")
+    assert r3.status_code == 401
+
+
 def test_auth_rejects_wrong_token():
     app = _make_app({"KIRA_AUTH_TOKEN": "sekret", "KIRA_RATE_LIMIT": "0"})
     c = TestClient(app)

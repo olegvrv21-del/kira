@@ -208,7 +208,13 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         h = request.headers.get("authorization") or ""
         if h.lower().startswith("bearer "):
             return h.split(" ", 1)[1].strip()
-        return request.headers.get("x-kira-token")
+        h2 = request.headers.get("x-kira-token")
+        if h2:
+            return h2
+        # Fallback: ?token=<...> on the URL. Needed for inline <img>/<a>
+        # tags where browsers cannot attach Authorization headers.
+        q = request.query_params.get("token") if hasattr(request, "query_params") else None
+        return q or None
 
     @staticmethod
     def _client_ip(request: Request) -> str:
