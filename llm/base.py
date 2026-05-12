@@ -77,13 +77,16 @@ class Usage:
 
 
 EventType = Literal[
-    "text",       # delta of assistant text
-    "tool_call",  # one complete tool call (name + args)
-    "throttle",   # adapter is backing off / rotating keys
-    "usage",      # token accounting
-    "error",      # non-fatal, stream continues
-    "cancelled",  # cancel_event was set
-    "done",       # end of stream
+    "text",          # delta of assistant text
+    "tool_call",     # one complete tool call (name + args)
+    "throttle",      # adapter is backing off / rotating keys
+    "usage",         # token accounting
+    "metering",      # credits delta (Q-specific but generally useful)
+    "context_usage", # context window % (Q-specific)
+    "message_id",    # provider-side message id for the in-flight assistant turn
+    "error",         # non-fatal, stream continues
+    "cancelled",     # cancel_event was set
+    "done",          # end of stream
 ]
 
 

@@ -754,14 +754,18 @@ async def run_agent(
     conv_id = str(uuid.uuid4())
     cont_id = str(uuid.uuid4())
 
-    # Phase 3c.1: route the main loop's HTTP through the llm/ provider. The
-    # main loop still manages `history` as Q dicts (for DB back-compat with
-    # existing sessions and orphan-tool_use handling); the provider exposes
-    # `stream_raw_body` as an escape hatch for that case. Full canonical-
-    # message refactor of the main loop is phase 3c.2 (separate session).
-    from llm.q_provider import QProvider
+    # Phase 3c.2: the main loop now operates on canonical Message[]; the Q-dict
+    # `history` is kept in lockstep for DB back-compat (agent_session_get parses
+    # Q dicts directly). Each turn we build the request body by feeding the
+    # canonical list to QProvider.messages_to_q_body, so the loop no longer
+    # speaks Bedrock dialect anywhere.
+    from llm.base import Message as _M
+    from llm.base import ToolCall as _TC
+    from llm.base import toolspecs_from_openai_json
+    from llm.q_provider import QProvider, messages_to_q_body, q_history_to_messages
 
     _main_provider = QProvider(api_key=key_pool.current() or api_key)
+    _canon_tools = toolspecs_from_openai_json(TOOL_SPECS)
 
     if history is None:
         history = []
@@ -776,6 +780,10 @@ async def run_agent(
                 }
             }
         )
+
+    # Canonical view of `history` — we work on this list, then sync deltas back
+    # into `history` (Q-dict) so SQLite + agent_session_get keep working.
+    messages: list = q_history_to_messages(history)
 
     yield _sse({"type": "meta", "session_id": session_id, "cwd": cwd, "model": model})
 
@@ -797,11 +805,26 @@ async def run_agent(
                 for tu in orphan
             ]
             history.append(_user_msg("", model, cwd, tool_results=stub_results))
+            # mirror into canonical
+            for tu in orphan:
+                messages.append(
+                    _M(
+                        role="tool",
+                        content="[interrupted: previous turn aborted; tool was not executed]",
+                        tool_call_id=tu["toolUseId"],
+                        name="error",
+                    )
+                )
+            messages.append(_M(role="user", content=""))
 
     credits = 0.0
     context_pct = 0.0
     pending_images: list[dict] = list(images) if images else []
     current = _user_msg(prompt, model, cwd, images=pending_images or None)
+    # Canonical current-turn user message. Images are passed via `extra` below,
+    # so we don't embed them in the Message content here.
+    _current_msg = _M(role="user", content=prompt or "")
+    pending_images_for_provider = pending_images or None
     pending_images = []
 
     cancel_ev = _register_cancel(session_id)
@@ -816,16 +839,18 @@ async def run_agent(
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn})
                 yield _sse({"type": "done"})
                 return
-            body = {
-                "conversationState": {
-                    "chatTriggerType": "MANUAL",
-                    "conversationId": conv_id,
-                    "agentContinuationId": cont_id,
-                    "agentTaskType": "vibe",
-                    "history": history,
-                    "currentMessage": current,
-                }
-            }
+            # Build request body from canonical messages + the current user turn.
+            body = messages_to_q_body(
+                messages + [_current_msg],
+                _canon_tools,
+                model=model,
+                conversation_id=conv_id,
+                continuation_id=cont_id,
+                env_state=_env_state(cwd),
+                images=pending_images_for_provider,
+                wrap_text=True,
+            )
+            pending_images_for_provider = None  # one-shot
             text_chunks: list[str] = []
             tool_uses: dict[str, dict] = {}
             tool_order: list[str] = []
@@ -833,6 +858,11 @@ async def run_agent(
 
             cancelled_mid_stream = False
             try:
+                # We feed the pre-built body via stream_raw_body so the canonical
+                # `messages_to_q_body` call above can stay the single point of
+                # vendor-shape construction in the loop. The provider’s
+                # high-level `stream()` would re-build the body from scratch —
+                # we already have it canonicalised, so we hand it over directly.
                 async for et, payload in _main_provider.stream_raw_body(body, cancel=cancel_ev):
                     if et == "_cancelled":
                         cancelled_mid_stream = True
@@ -889,6 +919,9 @@ async def run_agent(
                     ctx = (current.get("userInputMessage") or {}).get("userInputMessageContext") or {}
                     if ctx.get("toolResults"):
                         history.append(current)
+                        # canonical mirror handled below via the tool-results
+                        # already in `messages` (we append them BEFORE the
+                        # stream call when continuing a turn).
                 except Exception:
                     pass
                 yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
@@ -909,6 +942,15 @@ async def run_agent(
                             }
                         }
                     )
+                    # canonical mirror
+                    messages.append(_current_msg)
+                    messages.append(
+                        _M(
+                            role="assistant",
+                            content="".join(text_chunks),
+                            name=message_id,
+                        )
+                    )
                 yield _sse({"type": "cancelled"})
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
                 yield _sse({"type": "done"})
@@ -925,6 +967,10 @@ async def run_agent(
                             "toolUses": [],
                         }
                     }
+                )
+                messages.append(_current_msg)
+                messages.append(
+                    _M(role="assistant", content="".join(text_chunks), name=message_id)
                 )
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
                 yield _sse({"type": "done"})
@@ -1259,10 +1305,40 @@ async def run_agent(
                     }
                 }
             )
+            # canonical mirror: the user turn we just sent + the assistant turn + tool results
+            messages.append(_current_msg)
+            messages.append(
+                _M(
+                    role="assistant",
+                    content="".join(text_chunks),
+                    name=message_id,
+                    tool_calls=[
+                        _TC(
+                            id=tool_uses[tid]["toolUseId"],
+                            name=tool_uses[tid]["name"],
+                            arguments=tool_uses[tid].get("input", {}) or {},
+                        )
+                        for tid in tool_order
+                    ],
+                )
+            )
+            for r in results:
+                messages.append(
+                    _M(
+                        role="tool",
+                        content=(r.get("content") or [{}])[0].get("text", "") if r.get("content") else "",
+                        tool_call_id=r.get("toolUseId") or "",
+                        name=r.get("status") or "success",
+                    )
+                )
             yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
             next_images = pending_images or None
             pending_images = []
             current = _user_msg("", model, cwd, tool_results=results, images=next_images)
+            # Next-turn canonical user message: empty text, tool_results carried
+            # via the preceding role='tool' messages we just appended.
+            _current_msg = _M(role="user", content="")
+            pending_images_for_provider = next_images
 
         yield _sse({"type": "error", "message": "max turns reached"})
     except asyncio.CancelledError:
