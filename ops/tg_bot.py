@@ -13,7 +13,8 @@ Required env:
 
 Optional:
   KIRA_TG_MODEL         - default model (default: claude-haiku-4.5)
-  KIRA_TG_MAX_LEN       - max Telegram message length (default: 4000)
+  KIRA_TG_CHUNK_LEN     - chars per TG message (default: 3900; TG hard cap=4096)
+  KIRA_TG_PARSE_MODE    - 'Markdown' (default), 'MarkdownV2', or '' (off)
 """
 from __future__ import annotations
 import asyncio
@@ -36,7 +37,11 @@ ALLOWED = {int(x) for x in os.environ["KIRA_TG_ALLOWED_USERS"].split(",") if x.s
 KIRA_URL = os.environ.get("KIRA_URL", "http://localhost:3000").rstrip("/")
 KIRA_TOKEN = os.environ.get("KIRA_AUTH_TOKEN", "")
 MODEL_DEFAULT = os.environ.get("KIRA_TG_MODEL", "claude-haiku-4.5")
-MAX_LEN = int(os.environ.get("KIRA_TG_MAX_LEN", "4000"))
+# Per TG message; hard cap is 4096. Leave headroom for the tools-used header.
+CHUNK_LEN = int(os.environ.get("KIRA_TG_CHUNK_LEN", "3900"))
+# Legacy 'Markdown' is more forgiving than MarkdownV2 (no need to escape
+# every '.', '!', '-'). We try parse_mode first, fall back to plain text on 400.
+PARSE_MODE = os.environ.get("KIRA_TG_PARSE_MODE", "Markdown")
 TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # user_id -> session_id (one persistent kira session per user)
@@ -48,26 +53,137 @@ async def tg(http: httpx.AsyncClient, method: str, **params) -> dict:
     return r.json()
 
 
-async def send_message(http, chat_id: int, text: str, reply_to: int | None = None) -> Optional[int]:
-    params = {"chat_id": chat_id, "text": text[:MAX_LEN], "disable_web_page_preview": "true"}
-    if reply_to:
-        params["reply_to_message_id"] = reply_to
-    res = await tg(http, "sendMessage", **params)
-    if not res.get("ok"):
-        log.error("sendMessage failed: %s", res)
-        return None
-    return res["result"]["message_id"]
+def split_into_chunks(text: str, limit: int = CHUNK_LEN) -> list[str]:
+    """Split a long string into Telegram-sized pieces.
+
+    Preference order for split points: blank line, newline, space, hard cut.
+    Code fences are tracked: if a chunk ends inside a ``` block we close it,
+    and the next chunk starts with a re-opening fence so each piece renders.
+    """
+    if len(text) <= limit:
+        return [text]
+    raw_pieces: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        window = rest[:limit]
+        idx = window.rfind("\n\n")
+        if idx < limit // 2:
+            idx = window.rfind("\n")
+        if idx < limit // 2:
+            idx = window.rfind(" ")
+        if idx < limit // 3:
+            idx = limit  # hard cut
+        raw_pieces.append(rest[:idx].rstrip())
+        rest = rest[idx:].lstrip()
+    if rest:
+        raw_pieces.append(rest)
+
+    # Re-balance code fences across pieces.
+    out: list[str] = []
+    open_at_start = False
+    for piece in raw_pieces:
+        prefix = "```\n" if open_at_start else ""
+        fences = piece.count("```")
+        ends_open = open_at_start ^ (fences % 2 == 1)
+        suffix = "\n```" if ends_open else ""
+        out.append(prefix + piece + suffix)
+        open_at_start = ends_open
+    return out
 
 
-async def edit_message(http, chat_id: int, mid: int, text: str) -> None:
+async def _tg_send_or_edit(
+    http, method: str, params: dict, *, allow_markdown: bool = True
+) -> dict:
+    """sendMessage / editMessageText with parse_mode fallback.
+
+    Tries Markdown first (if PARSE_MODE set and allow_markdown=True); on
+    'can't parse entities' or any 400, retries as plain text.
+    """
+    if allow_markdown and PARSE_MODE:
+        with_md = {**params, "parse_mode": PARSE_MODE}
+        res = await tg(http, method, **with_md)
+        if res.get("ok"):
+            return res
+        desc = (res.get("description") or "").lower()
+        if "parse" in desc or "entities" in desc or "can't" in desc:
+            log.debug("%s: markdown parse failed, retrying as plain text", method)
+        else:
+            return res  # other errors — surface as-is
+    return await tg(http, method, **params)
+
+
+async def send_message(http, chat_id: int, text: str, reply_to: int | None = None,
+                       allow_markdown: bool = True) -> Optional[int]:
+    """Send a (possibly long) message, splitting into chunks as needed.
+
+    Returns the message_id of the FIRST sent chunk (useful as a streaming
+    placeholder). Subsequent chunks are sent without reply_to.
+    """
+    chunks = split_into_chunks(text) if text else [""]
+    first_mid: Optional[int] = None
+    for i, chunk in enumerate(chunks):
+        params = {"chat_id": chat_id, "text": chunk or "\u200b",
+                  "disable_web_page_preview": "true"}
+        if reply_to and i == 0:
+            params["reply_to_message_id"] = reply_to
+        res = await _tg_send_or_edit(http, "sendMessage", params, allow_markdown=allow_markdown)
+        if not res.get("ok"):
+            log.error("sendMessage failed: %s", res)
+            return first_mid
+        if first_mid is None:
+            first_mid = res["result"]["message_id"]
+    return first_mid
+
+
+async def edit_message(http, chat_id: int, mid: int, text: str,
+                       allow_markdown: bool = True) -> None:
+    """Edit a single TG message. Truncates to one chunk; the streaming code
+    in `handle_message` uses sync_chunks() to manage multi-message edits."""
     if not text.strip():
         return
-    res = await tg(http, "editMessageText",
-                   chat_id=chat_id, message_id=mid, text=text[:MAX_LEN],
-                   disable_web_page_preview="true")
+    chunks = split_into_chunks(text)
+    params = {"chat_id": chat_id, "message_id": mid, "text": chunks[0],
+              "disable_web_page_preview": "true"}
+    res = await _tg_send_or_edit(http, "editMessageText", params, allow_markdown=allow_markdown)
     if not res.get("ok") and "message is not modified" not in str(res):
-        # ignore noisy errors; log once
         log.debug("editMessageText: %s", res.get("description"))
+
+
+async def sync_chunks(
+    http,
+    chat_id: int,
+    placeholders: list[int],
+    text: str,
+    *,
+    allow_markdown: bool = True,
+) -> list[int]:
+    """Make the chain of TG messages match `text` (multi-message streaming).
+
+    - placeholders[i] is edited to chunks[i].
+    - If text grew into a new chunk, send a new message and append its id.
+    - We never delete extra placeholders (TG ratelimits delete heavily).
+    Returns the updated placeholder list.
+    """
+    chunks = split_into_chunks(text or "\u200b")
+    for i, chunk in enumerate(chunks):
+        if i < len(placeholders):
+            params = {"chat_id": chat_id, "message_id": placeholders[i],
+                      "text": chunk, "disable_web_page_preview": "true"}
+            res = await _tg_send_or_edit(http, "editMessageText", params,
+                                         allow_markdown=allow_markdown)
+            if not res.get("ok") and "not modified" not in str(res):
+                log.debug("sync edit[%d]: %s", i, res.get("description"))
+        else:
+            params = {"chat_id": chat_id, "text": chunk,
+                      "disable_web_page_preview": "true"}
+            res = await _tg_send_or_edit(http, "sendMessage", params,
+                                         allow_markdown=allow_markdown)
+            if res.get("ok"):
+                placeholders.append(res["result"]["message_id"])
+            else:
+                log.error("sync send[%d]: %s", i, res)
+                break
+    return placeholders
 
 
 async def send_typing(http, chat_id: int) -> None:
@@ -134,10 +250,13 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
     sid = USER_SESSIONS.get(user_id)
     model = MODEL_DEFAULT
 
-    # placeholder message we'll edit as tokens stream
-    placeholder = await send_message(http, chat_id, "⏳ ...", reply_to=msg["message_id"])
-    if not placeholder:
+    # placeholder message we'll edit as tokens stream. send_message is used
+    # without markdown for this single-line transient text.
+    first_mid = await send_message(http, chat_id, "⏳ ...", reply_to=msg["message_id"],
+                                    allow_markdown=False)
+    if not first_mid:
         return
+    placeholders: list[int] = [first_mid]
 
     body = {"prompt": text, "model": model}
     if sid:
@@ -148,7 +267,7 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
     tools_used: list[str] = []
 
     async def maybe_edit(force: bool = False) -> None:
-        nonlocal last_edit
+        nonlocal last_edit, placeholders
         now = time.monotonic()
         if not force and now - last_edit < 1.2:
             return
@@ -156,7 +275,7 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
         display = accumulated or "⏳ ..."
         if tools_used:
             display = f"🔧 {', '.join(tools_used[-3:])}\n\n{display}"
-        await edit_message(http, chat_id, placeholder, display)
+        placeholders = await sync_chunks(http, chat_id, placeholders, display)
 
     try:
         headers = {"Accept": "text/event-stream"}
@@ -167,7 +286,9 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
         ) as r:
             if r.status_code != 200:
                 err = await r.aread()
-                await edit_message(http, chat_id, placeholder, f"❌ HTTP {r.status_code}: {err[:300]!r}")
+                await edit_message(http, chat_id, placeholders[0],
+                                   f"❌ HTTP {r.status_code}: {err[:300]!r}",
+                                   allow_markdown=False)
                 return
             async for line in r.aiter_lines():
                 ev = parse_sse_line(line)
@@ -198,7 +319,8 @@ async def handle_message(http: httpx.AsyncClient, msg: dict) -> None:
         await maybe_edit(force=True)
     except Exception as e:
         log.exception("stream failed")
-        await edit_message(http, chat_id, placeholder, f"❌ {e}")
+        await edit_message(http, chat_id, placeholders[0], f"❌ {e}",
+                           allow_markdown=False)
 
 
 async def main():
