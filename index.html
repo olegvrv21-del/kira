@@ -303,11 +303,33 @@
   .brand-mark {
     width: 28px; height: 28px; border-radius: 50%;
     object-fit: cover; flex: 0 0 auto;
-    border: 1px solid var(--border);
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 2px 8px rgba(0,0,0,0.4);
+    border: 1px solid rgba(0, 240, 255, 0.25);
+    animation: brand-pulse 3.2s ease-in-out infinite;
     transition: filter .2s ease, transform .2s ease;
+    cursor: pointer;
   }
-  .brand-mark:hover { filter: brightness(1.15) saturate(1.2); transform: scale(1.05); }
+  .brand-mark:hover {
+    filter: brightness(1.2) saturate(1.3);
+    transform: scale(1.08);
+    animation-duration: 1.6s;
+  }
+  @keyframes brand-pulse {
+    0%, 100% {
+      box-shadow:
+        0 0 0 0 rgba(0, 240, 255, 0.35),
+        0 0 6px rgba(0, 240, 255, 0.15),
+        inset 0 0 0 1px rgba(0, 240, 255, 0.05);
+    }
+    50% {
+      box-shadow:
+        0 0 0 4px rgba(0, 240, 255, 0.0),
+        0 0 14px rgba(0, 240, 255, 0.55),
+        inset 0 0 0 1px rgba(0, 240, 255, 0.2);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .brand-mark { animation: none; }
+  }
   @media (max-width: 768px) { .brand-mark { width: 24px; height: 24px; } }
   .topbar .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-weight: 500; }
   .lang-toggle {
