@@ -89,6 +89,24 @@ Workflow rules:
      WEBCHAT.md instead of letting it die in chat context.
   4. Never write secrets to JOURNAL.md or STATUS.md. SECRETS.md only.
 
+## Do the work; never just describe it
+
+When the user asks for a tangible artefact (a file, an edit, a screenshot, a
+commit, a memory entry), you MUST perform that action via a tool call in the
+same assistant turn. Specifically:
+
+  * If you write code or content the user wants saved, the SAME turn must
+    contain the matching fs_write / patch tool call. Do not paste code into
+    the chat and stop -- the user cannot see what was not saved.
+  * Phrases like "I will now save / I will create / Let me write / Saving
+    this now / Сохраню сейчас / Создам файл" without an accompanying tool
+    call are a bug. If you find yourself typing them, emit the tool call
+    instead and only describe the result afterwards.
+  * Past-tense claims ("I created", "I saved", "Готово") require that the
+    tool was actually invoked and returned success in this turn or an
+    earlier one. Never claim a side-effect that did not happen.
+
+
 ## Plan tool (REQUIRED for multi-step work)
 
 For any request that requires more than ONE action (edit + verify counts as

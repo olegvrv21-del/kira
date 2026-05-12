@@ -937,29 +937,46 @@ async def run_agent(
 
             # ----- final answer (no tools): commit + return ------------------
             if not tool_calls_emitted:
-                # Plan-nudge: if the previous round executed only the plan tool
-                # and we got an empty/short text answer with no tools, the model
-                # has fallen into the "set the plan then stop" trap. Coax it to
-                # actually execute the first in_progress step instead of
-                # returning done with the task unfinished.
-                short_text = len("".join(text_chunks).strip()) < 240
-                if last_round_only_plan and short_text and plan_nudge_budget > 0:
+                full_text = "".join(text_chunks)
+                short_text = len(full_text.strip()) < 240
+                # Detect 'I will save / I created / let me write ...' style
+                # promises that were not followed by an actual tool call.
+                # Covers EN + RU + fenced code blocks (model pasted code in chat).
+                _promise_re = re.compile(
+                    r"(?i)(\bI'?ll (?:now |just )?(?:save|create|write|append|run|commit)\b"
+                    r"|\blet me (?:save|create|write|append|run|now)\b"
+                    r"|\bsaving (?:it|this|the file) (?:now|next)\b"
+                    r"|сохран[яюёе][юте]?\b|создам\b|создаю\b|напишу\b|сейчас\s+сохран"
+                    r"|записываю\b|записать\b|сейчас\s+создам)"
+                )
+                has_code_block = full_text.count("```") >= 2
+                promised_action = bool(_promise_re.search(full_text)) or has_code_block
+                should_nudge = plan_nudge_budget > 0 and (
+                    (last_round_only_plan and short_text)
+                    or promised_action
+                )
+                if should_nudge:
                     plan_nudge_budget -= 1
                     last_round_only_plan = False
+                    if last_round_only_plan or short_text:
+                        reason = "plan-only round produced no follow-up tool"
+                    else:
+                        reason = "text-only answer described an action without performing it"
                     nudge = (
-                        "Continue. The plan is recorded, now execute the first "
-                        "in_progress step. Call the appropriate tool (fs_write, "
-                        "patch, execute_bash, browser_*, fs_read, ...). Do NOT just "
-                        "summarize what you will do -- perform the action. If the "
-                        "task is genuinely complete, mark every plan item done "
-                        "and reply with a short confirmation."
+                        "Continue. You described an action but did not call the matching "
+                        "tool. Perform it NOW: if you wrote file contents in chat, call "
+                        "fs_write / patch to actually save them. If you said you would run "
+                        "a command, call execute_bash. If you said the plan is set, mark the "
+                        "first step in_progress and call the tool that step requires. Do "
+                        "NOT just acknowledge -- emit the tool call. If the task is genuinely "
+                        "complete, mark every plan item done and reply with one short line."
                     )
                     messages.append(current_user)
                     messages.append(
-                        _M(role="assistant", content="".join(text_chunks), name=message_id, tool_calls=[])
+                        _M(role="assistant", content=full_text, name=message_id, tool_calls=[])
                     )
                     _sync_history_dict()
-                    yield _sse({"type": "plan_nudge", "reason": "plan-only round produced no follow-up tool"})
+                    yield _sse({"type": "plan_nudge", "reason": reason})
                     current_user = _M(role="user", content=nudge)
                     pending_images_for_provider = None
                     continue

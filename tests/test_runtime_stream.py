@@ -444,3 +444,37 @@ async def test_plan_nudge_when_plan_only_round_yields_no_followup(monkeypatch, t
     # Loop must reach a done event (not an error) only after the third turn.
     dones = [e for e in events if e.get("type") == "done"]
     assert dones, "no done event after nudge cycle"
+
+
+@pytest.mark.asyncio
+async def test_nudge_when_model_promises_save_without_tool(monkeypatch, tmp_path):
+    """Bug 1b: model writes a fenced code block + 'Сохраню сейчас' but no
+    fs_write. Loop should fire the nudge and continue instead of finishing.
+    """
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    fake = _stream(
+        # turn 1: long text with code block and a save-promise, no tool calls.
+        [
+            (
+                "assistantResponseEvent",
+                {
+                    "content": (
+                        "Вот код игры:\n\n```html\n<html>...</html>\n```\n\n"
+                        "Теперь сохраню его и проверю, что лежит на месте."
+                    ),
+                    "messageId": "m1",
+                },
+            ),
+        ],
+        # turn 2 (after nudge): final short ack, still no tools — done.
+        [
+            ("assistantResponseEvent", {"content": "ok", "messageId": "m2"}),
+        ],
+    )
+    with patch.object(q_client, "stream_q", fake):
+        events = await _collect(ar.run_agent("k", "do thing", session_id="unit_promise"))
+
+    nudges = [e for e in events if e.get("type") == "plan_nudge"]
+    assert nudges, f"expected plan_nudge, got: {[e.get('type') for e in events]}"
+    dones = [e for e in events if e.get("type") == "done"]
+    assert dones
