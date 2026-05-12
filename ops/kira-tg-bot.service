@@ -1,0 +1,16 @@
+[Unit]
+Description=Kira Telegram bot frontend
+After=network-online.target webchat.service
+Requires=webchat.service
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/webchat
+EnvironmentFile=/etc/kira/tg_bot.env
+ExecStart=/home/exedev/webchat/.venv/bin/python /home/exedev/webchat/ops/tg_bot.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
