@@ -16,6 +16,30 @@
       "action": {"type": "deny", "message": "refusing to rm -rf /"}
     },
     {
+      "_comment": "Self-edit guard: deny edits to the security-critical core of webchat. Auth, key pool, hook config, sandbox runner, the restart token, and the critic itself MUST NOT be silently rewritten by the agent in-flight. To intentionally change them, edit on the host outside the agent, or disable this hook in hooks.json first.",
+      "id": "deny-self-edit-core",
+      "event": "pre_tool",
+      "match": {"tool": ["fs_write", "patch"],
+                "args_regex": {"path": "^/host/webchat/(agent_auth|agent_keys|sandbox_runtime|agent_critic|agent_hooks)\\.py$|^/host/webchat/hooks\\.json$|^/host/webchat/\\.restart_token$"}},
+      "action": {"type": "deny", "message": "self-edit of security-critical file is blocked by hook deny-self-edit-core; edit on the host or disable this hook first"}
+    },
+    {
+      "_comment": "Audit-log every other write into /host/webchat/* so self-edits are visible in /agent/actions. Pairs with deny-self-edit-core above.",
+      "id": "log-self-edit",
+      "event": "pre_tool",
+      "match": {"tool": ["fs_write", "patch"],
+                "args_regex": {"path": "^/host/webchat/"}},
+      "action": {"type": "log", "message": "self-edit: writing into /host/webchat/"}
+    },
+    {
+      "_comment": "Shell redirect bypass — block redirecting into security-critical files via execute_bash even though fs_write is already guarded above.",
+      "id": "deny-self-edit-shell-redirect",
+      "event": "pre_tool",
+      "match": {"tool": "execute_bash",
+                "args_regex": {"command": ">\\s*/host/webchat/(agent_auth|agent_keys|sandbox_runtime|agent_critic|agent_hooks|hooks)|>\\s*/host/webchat/\\.restart_token"}},
+      "action": {"type": "deny", "message": "shell redirect into security-critical webchat file is blocked"}
+    },
+    {
       "id": "log-git-commit",
       "event": "post_tool",
       "match": {"tool": "git_commit", "status": "success"},
