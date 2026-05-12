@@ -259,3 +259,81 @@ async def test_handle_subagent_caps_at_max_parallel(monkeypatch):
         )
     assert invocations["n"] == ar.MAX_SUBAGENT_PARALLEL
     assert final[0] == "success"
+
+
+# ---------- Phase 3b: subagent via provider abstraction ----------
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_silent_via_mock_provider(monkeypatch):
+    """Phase 3b guard: _run_subagent_silent uses llm/ provider layer.
+
+    Switches KIRA_LLM_PROVIDER=mock and asserts q_client is never called.
+    Also verifies tool dispatch + result feedback work over the canonical
+    message protocol (text -> tool_call -> tool result -> final text).
+    """
+    import llm
+    from llm import MockProvider
+
+    # Scripted: turn 1 emits a tool_call; turn 2 emits final text.
+    turn = {"n": 0}
+
+    def script(_msgs):
+        turn["n"] += 1
+        if turn["n"] == 1:
+            return [
+                {"type": "text", "text": "let me check… "},
+                {"type": "tool_call", "id": "t1", "name": "fs_read", "args": {"path": "/x"}},
+            ]
+        return [{"type": "text", "text": "file says: HELLO"}]
+
+    captured_provider = {}
+
+    def factory():
+        p = MockProvider(script)
+        captured_provider["p"] = p
+        return p
+
+    llm.register("mock", factory)
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
+
+    # tool dispatch returns canned contents
+    monkeypatch.setattr(ar.toolkit, "run_tool", lambda *a, **kw: ("success", "HELLO", None))
+
+    # Poison q_client so we know it's not called.
+    async def boom(*a, **kw):
+        raise AssertionError("q_client must not be called when provider=mock")
+        yield None  # pragma: no cover
+
+    with patch.object(q_client, "stream_q", boom):
+        out = await ar._run_subagent_silent("k", "read /x", "mock-1", "/c", "sid")
+
+    assert "file says: HELLO" in out
+    p = captured_provider["p"]
+    assert len(p.calls) == 2  # two turns
+    # First call: system + user (wrapped). Second call: + assistant(tool_call) + tool + empty user.
+    first_roles = [m.role for m in p.calls[0]["messages"]]
+    assert first_roles == ["system", "user"]
+    second_roles = [m.role for m in p.calls[1]["messages"]]
+    assert second_roles == ["system", "user", "assistant", "tool", "user"]
+    # Tool message carried the result for the right call id.
+    tool_msg = p.calls[1]["messages"][3]
+    assert tool_msg.tool_call_id == "t1"
+    assert tool_msg.content == "HELLO"
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_silent_provider_handles_exception(monkeypatch):
+    """Errors from the provider are caught and returned as [subagent error] text."""
+    import llm
+    from llm import MockProvider
+
+    def factory():
+        return MockProvider([{"type": "raise", "message": "transport blew up"}])
+
+    llm.register("mock", factory)
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
+
+    out = await ar._run_subagent_silent("k", "q", "mock-1", "/c", "sid")
+    assert out.startswith("[subagent error]")
+    assert "transport blew up" in out

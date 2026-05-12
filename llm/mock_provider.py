@@ -48,9 +48,12 @@ class MockProvider:
         timeout: float = 300.0,
         extra: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        # Snapshot the messages list so later mutations by the caller (agent
+        # loops typically append to the same list) don't retroactively change
+        # what tests see for past calls.
         self.calls.append(
             {
-                "messages": messages,
+                "messages": list(messages),
                 "tools": [t.name for t in tools],
                 "model": model,
                 "extra": extra or {},

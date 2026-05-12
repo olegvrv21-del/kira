@@ -77,13 +77,26 @@ def messages_to_q_body(
     model: str,
     conversation_id: str | None = None,
     continuation_id: str | None = None,
+    env_state: dict | None = None,
+    images: list[dict] | None = None,
 ) -> dict:
     """Build the JSON body Bedrock-Q expects.
 
     Splits `messages` into `history` (everything but the last user turn) + a
     `currentMessage` (the trailing user turn, possibly carrying tool_results).
+
+    `env_state` (if given) is injected into every userInputMessageContext as
+    Q expects (`{operatingSystem, currentWorkingDirectory}`). `images`, if any,
+    are attached to the `currentMessage`.
     """
     q_tools = _tool_specs_to_q(tools)
+
+    def _ctx() -> dict:
+        c: dict = {"tools": q_tools}
+        if env_state is not None:
+            c["envState"] = env_state
+        return c
+
     history: list[dict] = []
     current: dict | None = None
 
@@ -101,7 +114,7 @@ def messages_to_q_body(
                 {
                     "userInputMessage": {
                         "content": _content_to_text(m.content),
-                        "userInputMessageContext": {"tools": q_tools},
+                        "userInputMessageContext": _ctx(),
                         "origin": "KIRO_CLI",
                         "modelId": model,
                     }
@@ -117,16 +130,19 @@ def messages_to_q_body(
                 }
             )
         elif m.role == "user":
+            ctx = _ctx()
+            if pending_tool_results:
+                ctx["toolResults"] = pending_tool_results
+                pending_tool_results = []
             msg = {
                 "content": _content_to_text(m.content),
-                "userInputMessageContext": {"tools": q_tools},
+                "userInputMessageContext": ctx,
                 "origin": "KIRO_CLI",
                 "modelId": model,
             }
-            if pending_tool_results:
-                msg["userInputMessageContext"]["toolResults"] = pending_tool_results
-                pending_tool_results = []
             if i == last_user_idx:
+                if images:
+                    msg["images"] = images
                 current = {"userInputMessage": msg}
             else:
                 history.append({"userInputMessage": msg})
@@ -143,13 +159,13 @@ def messages_to_q_body(
 
     if current is None:
         # No user message at all — synthesise an empty one carrying tool_results.
+        ctx = _ctx()
+        if pending_tool_results:
+            ctx["toolResults"] = pending_tool_results
         current = {
             "userInputMessage": {
                 "content": "",
-                "userInputMessageContext": {
-                    "tools": q_tools,
-                    **({"toolResults": pending_tool_results} if pending_tool_results else {}),
-                },
+                "userInputMessageContext": ctx,
                 "origin": "KIRO_CLI",
                 "modelId": model,
             }
@@ -243,6 +259,8 @@ class QProvider:
             model=model,
             conversation_id=(extra or {}).get("conversation_id"),
             continuation_id=(extra or {}).get("continuation_id"),
+            env_state=(extra or {}).get("env_state"),
+            images=(extra or {}).get("images"),
         )
         api_key = self._resolve_key()
         acc = _ToolAccumulator()

@@ -344,6 +344,23 @@ def _env_state(cwd: str) -> dict[str, str]:
     }
 
 
+def _wrap_user_text(text: str) -> str:
+    """Wrap raw user text in the CONTEXT ENTRY / USER MESSAGE markers Q expects.
+
+    Exposed so the llm/ adapter path can produce the exact same wire content.
+    Empty text → empty string (used for tool_results-only continuations).
+    """
+    if not text:
+        return ""
+    ts = datetime.now(UTC).isoformat()
+    return (
+        f"--- CONTEXT ENTRY BEGIN ---\n"
+        f"Current time: {ts}\n"
+        f"--- CONTEXT ENTRY END ---\n\n"
+        f"--- USER MESSAGE BEGIN ---\n{text}--- USER MESSAGE END ---"
+    )
+
+
 def _user_msg(
     text: str,
     model: str,
@@ -352,17 +369,7 @@ def _user_msg(
     tool_specs: list[dict] | None = None,
     images: list[dict] | None = None,
 ) -> dict:
-    ts = datetime.now(UTC).isoformat()
-    wrapped = (
-        (
-            f"--- CONTEXT ENTRY BEGIN ---\n"
-            f"Current time: {ts}\n"
-            f"--- CONTEXT ENTRY END ---\n\n"
-            f"--- USER MESSAGE BEGIN ---\n{text}--- USER MESSAGE END ---"
-        )
-        if text
-        else ""
-    )
+    wrapped = _wrap_user_text(text)
     ctx: dict[str, Any] = {"envState": _env_state(cwd), "tools": tool_specs if tool_specs is not None else TOOL_SPECS}
     if tool_results is not None:
         ctx["toolResults"] = tool_results
@@ -615,82 +622,80 @@ async def _run_subagent_silent(
     Reuses the same sandbox session/workspace but a fresh conversation
     (separate conversationId, fresh history). Subagents do NOT see
     use_subagent in their tool list, preventing recursion.
+
+    Phase 3b: routes through `llm.get_provider()` instead of q_client directly.
+    The provider receives canonical messages (`list[Message]`); QProvider
+    converts to Q wire format internally. KIRA_LLM_PROVIDER env switches
+    backends. Default = amazon-q (== old behaviour, bit-exact wire format).
     """
+    from llm import Message, get_provider, toolspecs_from_openai_json
+    from llm.q_provider import QProvider
+
     conv_id = str(uuid.uuid4())
     cont_id = str(uuid.uuid4())
     sub_prompt = query
     if relevant_context:
         sub_prompt = f"{query}\n\nAdditional context:\n{relevant_context}"
 
-    history = [
-        {
-            "userInputMessage": {
-                "content": SYSTEM_PROMPT,
-                "userInputMessageContext": {"envState": _env_state(cwd)},
-                "origin": "KIRO_CLI",
-                "modelId": model,
-            }
-        }
+    # Canonical message history. System role gets the agent system prompt;
+    # the first user message carries the (wrapped) query. We keep the same
+    # CONTEXT ENTRY wrapping the old _user_msg used so the model sees the
+    # exact same prompt format.
+    messages: list[Message] = [
+        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="user", content=_wrap_user_text(sub_prompt)),
     ]
-    current = _user_msg(sub_prompt, model, cwd, tool_specs=SUBAGENT_TOOL_SPECS)
+    # Subagent tools (no use_subagent recursion) in canonical shape.
+    # We pass raw Q-shape specs as-is; toolspecs_from_openai_json handles both.
+    sub_tool_specs = toolspecs_from_openai_json(SUBAGENT_TOOL_SPECS)
+
+    provider_name = os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
+    if provider_name == "amazon-q":
+        provider = QProvider(api_key=key_pool.current() or api_key)
+    else:
+        provider = get_provider(provider_name)
+
     final_text: list[str] = []
 
     for _ in range(MAX_SUBAGENT_TURNS):
-        body = {
-            "conversationState": {
-                "chatTriggerType": "MANUAL",
-                "conversationId": conv_id,
-                "agentContinuationId": cont_id,
-                "agentTaskType": "vibe",
-                "history": history,
-                "currentMessage": current,
-            }
-        }
         text_chunks: list[str] = []
-        tool_uses: dict[str, dict] = {}
-        tool_order: list[str] = []
-        message_id = None
+        tool_calls_seen: list = []  # list[ToolCall]
         try:
-            async for et, payload in q_client.stream_q(key_pool.current() or api_key, body):
-                if et == "_throttle":
-                    continue
-                if not isinstance(payload, dict):
-                    continue
-                if et == "assistantResponseEvent":
-                    c = payload.get("content", "")
-                    if c:
-                        text_chunks.append(c)
-                    mid = payload.get("messageId")
-                    if mid:
-                        message_id = mid
-                elif et == "toolUseEvent":
-                    tid = payload.get("toolUseId")
-                    if not tid:
-                        continue
-                    if tid not in tool_uses:
-                        tool_uses[tid] = {"toolUseId": tid, "name": payload.get("name", ""), "_input_str": ""}
-                        tool_order.append(tid)
-                    inp = payload.get("input")
-                    if inp:
-                        tool_uses[tid]["_input_str"] += inp
-                    if payload.get("stop"):
-                        raw = tool_uses[tid]["_input_str"]
-                        try:
-                            tool_uses[tid]["input"] = json.loads(raw) if raw else {}
-                        except Exception as e:
-                            tool_uses[tid]["input"] = {"_parse_error": str(e), "_raw": raw}
+            async for ev in provider.stream(
+                messages,
+                sub_tool_specs,
+                model=model,
+                extra={
+                    "conversation_id": conv_id,
+                    "continuation_id": cont_id,
+                    "env_state": _env_state(cwd),
+                },
+            ):
+                if ev.type == "text" and ev.text:
+                    text_chunks.append(ev.text)
+                elif ev.type == "tool_call" and ev.tool is not None:
+                    tool_calls_seen.append(ev.tool)
+                # throttle / usage / error events: ignored in silent subagent
         except Exception as e:
             return f"[subagent error] {type(e).__name__}: {e}"
 
         final_text.append("".join(text_chunks))
-        message_id = message_id or uuid.uuid4().hex
-        if not tool_order:
+        if not tool_calls_seen:
             return "".join(final_text).strip() or "(subagent produced no output)"
-        results = []
-        for tid in tool_order:
-            tu = tool_uses[tid]
-            name = tu["name"]
-            args = tu.get("input", {})
+
+        # Persist assistant turn (text + tool_calls) into canonical history.
+        messages.append(
+            Message(
+                role="assistant",
+                content="".join(text_chunks),
+                tool_calls=list(tool_calls_seen),
+            )
+        )
+
+        # Execute each tool, append a tool-result message.
+        for tc in tool_calls_seen:
+            name = tc.name
+            args = tc.arguments
             if USE_SANDBOX:
                 status, out, _imgs = await asyncio.to_thread(toolkit.run_tool, name, args, cwd, session_id)
             else:
@@ -712,26 +717,17 @@ async def _run_subagent_silent(
                 )
             except Exception:
                 pass
-            # (subagent path: no per-tool diff stream; only main loop streams diffs.)
-            results.append({"toolUseId": tid, "content": [{"text": out}], "status": status})
-        history.append(current)
-        history.append(
-            {
-                "assistantResponseMessage": {
-                    "messageId": message_id,
-                    "content": "".join(text_chunks),
-                    "toolUses": [
-                        {
-                            "toolUseId": tool_uses[tid]["toolUseId"],
-                            "name": tool_uses[tid]["name"],
-                            "input": tool_uses[tid].get("input", {}),
-                        }
-                        for tid in tool_order
-                    ],
-                }
-            }
-        )
-        current = _user_msg("", model, cwd, tool_results=results, tool_specs=SUBAGENT_TOOL_SPECS)
+            messages.append(
+                Message(
+                    role="tool",
+                    content=out or "",
+                    tool_call_id=tc.id,
+                    name=name,
+                )
+            )
+        # An empty user turn carries the tool_results forward (QProvider
+        # attaches buffered tool messages to the next user turn's context).
+        messages.append(Message(role="user", content=""))
     return "".join(final_text).strip() + "\n[subagent: max turns reached]"
 
 
