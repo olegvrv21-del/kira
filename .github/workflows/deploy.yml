@@ -52,13 +52,22 @@ jobs:
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no" \
             ./ "$USER@$HOST:webchat/"
 
-      - name: Restart service
+      - name: Restart services
         env:
           HOST: ${{ secrets.PROD_HOST }}
           USER: ${{ secrets.PROD_USER }}
         run: |
+          # webchat = main app. kira-tg-bot = Telegram frontend (ops/tg_bot.py).
+          # kira-tg-bot restart is best-effort: a missing unit shouldn't fail
+          # the deploy on environments that don't run the bot.
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no "$USER@$HOST" \
-            'sudo systemctl restart webchat && sleep 3 && systemctl is-active webchat'
+            'set -e
+             sudo systemctl restart webchat
+             sleep 3
+             systemctl is-active webchat
+             if systemctl list-unit-files | grep -q "^kira-tg-bot.service"; then
+               sudo systemctl restart kira-tg-bot || true
+             fi'
 
       - name: Smoke test (via SSH → localhost)
         env:
