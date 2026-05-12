@@ -60,8 +60,17 @@ def init() -> None:
                 model TEXT,
                 created_at REAL,
                 updated_at REAL,
-                credits REAL DEFAULT 0
+                credits REAL DEFAULT 0,
+                owner_id TEXT
             );
+            CREATE TABLE IF NOT EXISTS user_credits(
+                user_id TEXT,
+                day TEXT,
+                credits REAL DEFAULT 0,
+                PRIMARY KEY(user_id, day)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_credits_day ON user_credits(day);
+            CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS history(
                 sid TEXT,
                 idx INTEGER,
@@ -100,6 +109,9 @@ def init() -> None:
         cols = {r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()}
         if "credits" not in cols:
             c.execute("ALTER TABLE sessions ADD COLUMN credits REAL DEFAULT 0")
+        if "owner_id" not in cols:
+            c.execute("ALTER TABLE sessions ADD COLUMN owner_id TEXT")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id, updated_at DESC)")
         acols = {r[1] for r in c.execute("PRAGMA table_info(actions)").fetchall()}
         if acols:
             if "diff" not in acols:
@@ -129,8 +141,10 @@ def get_month_credits() -> float:
     return sum(float(r[0]) for r in rows)
 
 
-def record_credits(sid: str, credits_total_for_session: float) -> None:
-    """Set absolute session total; bump daily by the delta."""
+def record_credits(sid: str, credits_total_for_session: float, owner_id: str | None = None) -> None:
+    """Set absolute session total; bump daily by the delta. If owner_id is
+    given, also bump per-user daily totals so /agent/limits can be sliced
+    per user."""
     with _conn() as c:
         row = c.execute("SELECT credits FROM sessions WHERE sid=?", (sid,)).fetchone()
         prev = float(row[0]) if row and row[0] is not None else 0.0
@@ -147,12 +161,44 @@ def record_credits(sid: str, credits_total_for_session: float) -> None:
                 "ON CONFLICT(day) DO UPDATE SET credits = credits + excluded.credits",
                 (day, delta),
             )
+            if owner_id:
+                c.execute(
+                    "INSERT INTO user_credits(user_id, day, credits) VALUES (?,?,?) "
+                    "ON CONFLICT(user_id, day) DO UPDATE SET credits = credits + excluded.credits",
+                    (owner_id, day, delta),
+                )
 
 
-def get_session_credits(sid: str) -> float:
+def get_user_today_credits(user_id: str) -> float:
+    if not user_id:
+        return 0.0
     with _conn() as c:
-        row = c.execute("SELECT credits FROM sessions WHERE sid=?", (sid,)).fetchone()
-    return float(row[0]) if row and row[0] is not None else 0.0
+        r = c.execute(
+            "SELECT credits FROM user_credits WHERE user_id=? AND day=?",
+            (user_id, _today_key()),
+        ).fetchone()
+    return float(r[0]) if r else 0.0
+
+
+def get_user_month_credits(user_id: str) -> float:
+    if not user_id:
+        return 0.0
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT credits FROM user_credits WHERE user_id=? AND day LIKE ?",
+            (user_id, _month_key() + "-%"),
+        ).fetchall()
+    return sum(float(r[0]) for r in rows)
+
+
+def get_session_credits(sid: str, owner_id: str | None = None) -> float:
+    with _conn() as c:
+        row = c.execute("SELECT credits, owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
+    if not row:
+        return 0.0
+    if not _owner_ok(row[1], owner_id):
+        return 0.0
+    return float(row[0]) if row[0] is not None else 0.0
 
 
 def get_today_credits() -> float:
@@ -161,28 +207,61 @@ def get_today_credits() -> float:
     return float(row[0]) if row else 0.0
 
 
-def load_history(sid: str) -> list[dict] | None:
+def session_owner(sid: str) -> str | None:
+    """Return owner_id of session, or None if session missing/legacy (NULL)."""
     with _conn() as c:
-        row = c.execute("SELECT 1 FROM sessions WHERE sid=?", (sid,)).fetchone()
+        r = c.execute("SELECT owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
+    return r[0] if r else None
+
+
+def _owner_ok(stored: str | None, requester: str | None) -> bool:
+    """Authorization rule: legacy sessions (stored NULL) are visible to anyone
+    so we don't break existing data. Otherwise stored must equal requester."""
+    if requester is None:
+        return True  # caller opted out of filtering
+    if stored is None:
+        return True
+    return stored == requester
+
+
+def load_history(sid: str, owner_id: str | None = None) -> list[dict] | None:
+    with _conn() as c:
+        row = c.execute("SELECT owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
         if not row:
+            return None
+        if not _owner_ok(row[0], owner_id):
             return None
         rows = c.execute("SELECT msg_json FROM history WHERE sid=? ORDER BY idx", (sid,)).fetchall()
     return [json.loads(r[0]) for r in rows]
 
 
-def save_session(sid: str, history: list[dict], model: str, title: str | None = None) -> None:
+def save_session(
+    sid: str,
+    history: list[dict],
+    model: str,
+    title: str | None = None,
+    owner_id: str | None = None,
+) -> None:
     now = time.time()
     with _conn() as c:
-        existing = c.execute("SELECT title, created_at FROM sessions WHERE sid=?", (sid,)).fetchone()
+        existing = c.execute("SELECT title, created_at, owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
         if existing:
-            c.execute(
-                "UPDATE sessions SET model=?, updated_at=?, title=COALESCE(?, title) WHERE sid=?",
-                (model, now, title, sid),
-            )
+            # Claim legacy (NULL) rows for the current owner so they stop being
+            # globally visible after first authed touch.
+            if owner_id and existing[2] is None:
+                c.execute(
+                    "UPDATE sessions SET model=?, updated_at=?, title=COALESCE(?, title), owner_id=? WHERE sid=?",
+                    (model, now, title, owner_id, sid),
+                )
+            else:
+                c.execute(
+                    "UPDATE sessions SET model=?, updated_at=?, title=COALESCE(?, title) WHERE sid=?",
+                    (model, now, title, sid),
+                )
         else:
             c.execute(
-                "INSERT INTO sessions(sid, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
-                (sid, title, model, now, now),
+                "INSERT INTO sessions(sid, title, model, created_at, updated_at, owner_id) VALUES (?,?,?,?,?,?)",
+                (sid, title, model, now, now, owner_id),
             )
         # rewrite history (idempotent; histories are short enough)
         c.execute("DELETE FROM history WHERE sid=?", (sid,))
@@ -192,13 +271,19 @@ def save_session(sid: str, history: list[dict], model: str, title: str | None = 
         )
 
 
-def list_sessions(limit: int = 100) -> list[dict[str, Any]]:
+def list_sessions(limit: int = 100, owner_id: str | None = None) -> list[dict[str, Any]]:
+    where = ""
+    params: tuple = ()
+    if owner_id is not None:
+        # Legacy (NULL) rows visible to everyone for back-compat.
+        where = " WHERE (s.owner_id IS NULL OR s.owner_id = ?)"
+        params = (owner_id,)
     with _conn() as c:
         rows = c.execute(
-            """SELECT s.sid, s.title, s.model, s.created_at, s.updated_at,
+            f"""SELECT s.sid, s.title, s.model, s.created_at, s.updated_at,
                    (SELECT COUNT(*) FROM history h WHERE h.sid=s.sid) AS n_msgs
-               FROM sessions s ORDER BY s.updated_at DESC LIMIT ?""",
-            (limit,),
+               FROM sessions s{where} ORDER BY s.updated_at DESC LIMIT ?""",
+            params + (limit,),
         ).fetchall()
     out = []
     with _conn() as c:
@@ -224,14 +309,20 @@ def get_session_model(sid: str) -> str | None:
     return row[0] if row else None
 
 
-def rename_session(sid: str, title: str) -> bool:
+def rename_session(sid: str, title: str, owner_id: str | None = None) -> bool:
     with _conn() as c:
+        row = c.execute("SELECT owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
+        if not row or not _owner_ok(row[0], owner_id):
+            return False
         cur = c.execute("UPDATE sessions SET title=? WHERE sid=?", (title, sid))
         return cur.rowcount > 0
 
 
-def delete_session(sid: str) -> bool:
+def delete_session(sid: str, owner_id: str | None = None) -> bool:
     with _conn() as c:
+        row = c.execute("SELECT owner_id FROM sessions WHERE sid=?", (sid,)).fetchone()
+        if not row or not _owner_ok(row[0], owner_id):
+            return False
         c.execute("DELETE FROM history WHERE sid=?", (sid,))
         cur = c.execute("DELETE FROM sessions WHERE sid=?", (sid,))
         return cur.rowcount > 0

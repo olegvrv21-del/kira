@@ -9,7 +9,7 @@ from typing import Any
 _PROCESS_START = time.time()
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -412,13 +412,22 @@ async def skill_get(name: str):
 
 
 @app.get("/agent/plan/{sid}")
-async def agent_plan_get(sid: str):
+async def agent_plan_get(sid: str, request: Request):
+    uid = agent_auth.current_user_id(request)
+    owner = agent_store.session_owner(sid)
+    if owner is not None and owner != uid:
+        raise HTTPException(status_code=403, detail="forbidden")
     p = agent_store.get_meta(sid, "plan", {"items": []})
     return p if isinstance(p, dict) else {"items": []}
 
 
 @app.get("/agent/actions")
-async def agent_actions(sid: str | None = None, limit: int = 200):
+async def agent_actions(request: Request, sid: str | None = None, limit: int = 200):
+    uid = agent_auth.current_user_id(request)
+    if sid:
+        owner = agent_store.session_owner(sid)
+        if owner is not None and owner != uid:
+            raise HTTPException(status_code=403, detail="forbidden")
     return {"actions": agent_store.list_actions(sid=sid, limit=limit)}
 
 
@@ -732,22 +741,31 @@ def _cost_limit_check(sid: str, current_turn_credits: float):
 agent_runtime._cost_limit_exceeded = _cost_limit_check
 
 # In-memory cache so we don't re-read SQLite on every turn of an active session.
-_AGENT_SESSIONS: dict[str, list[dict]] = {}
+# Key is (user_id, sid) so two users with the same sid don't collide.
+_AGENT_SESSIONS: dict[tuple[str, str], list[dict]] = {}
 
 
 @app.post("/agent")
-async def agent_endpoint(req: AgentRequest):
+async def agent_endpoint(req: AgentRequest, request: Request):
     if not KIRO_API_KEY:
         return JSONResponse({"error": "KIRO_API_KEY not set"}, status_code=400)
+    user_id = agent_auth.current_user_id(request)
     model = req.model or "claude-opus-4.7"
     if model.startswith("q/"):
         model = model[2:]
     sid = req.session_id or uuid.uuid4().hex[:12]
-    hist = _AGENT_SESSIONS.get(sid)
+    # Ownership check: if caller supplied an existing sid, it must be theirs
+    # (or legacy / NULL). Reject foreign sids early.
+    if req.session_id:
+        existing_owner = agent_store.session_owner(sid)
+        if existing_owner is not None and existing_owner != user_id:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+    cache_key = (user_id, sid)
+    hist = _AGENT_SESSIONS.get(cache_key)
     if hist is None:
-        hist = agent_store.load_history(sid)
+        hist = agent_store.load_history(sid, owner_id=user_id)
         if hist is not None:
-            _AGENT_SESSIONS[sid] = hist
+            _AGENT_SESSIONS[cache_key] = hist
 
     # Pre-flight cost check so we don't even open the stream.
     pre_err = _cost_limit_check(sid, 0.0)
@@ -764,8 +782,8 @@ async def agent_endpoint(req: AgentRequest):
         nonlocal hist
         if hist is None:
             hist = []
-            _AGENT_SESSIONS[sid] = hist
-        baseline = agent_store.get_session_credits(sid)
+            _AGENT_SESSIONS[cache_key] = hist
+        baseline = agent_store.get_session_credits(sid, owner_id=user_id)
         agent_images = None
         if req.images:
             agent_images = []
@@ -785,7 +803,7 @@ async def agent_endpoint(req: AgentRequest):
                         last_credits = float(obj["credits"])
                         # persist immediately so /agent/limits sees fresh value
                         try:
-                            agent_store.record_credits(sid, baseline + last_credits)
+                            agent_store.record_credits(sid, baseline + last_credits, owner_id=user_id)
                         except Exception as e:
                             print(f"[agent_store] credit update failed: {e}")
             except Exception:
@@ -793,7 +811,7 @@ async def agent_endpoint(req: AgentRequest):
             yield ev
         try:
             title = agent_store.derive_title(hist)
-            agent_store.save_session(sid, hist, model, title)
+            agent_store.save_session(sid, hist, model, title, owner_id=user_id)
         except Exception as e:
             print(f"[agent_store] save failed: {e}")
 
@@ -807,28 +825,41 @@ async def agent_stop(sid: str):
 
 
 @app.get("/agent/sessions")
-async def agent_sessions_list():
-    return JSONResponse({"sessions": agent_store.list_sessions(limit=200)})
+async def agent_sessions_list(request: Request):
+    uid = agent_auth.current_user_id(request)
+    return JSONResponse({"sessions": agent_store.list_sessions(limit=200, owner_id=uid)})
 
 
 @app.get("/agent/limits")
-async def agent_limits(session_id: str | None = None):
-    sess = agent_store.get_session_credits(session_id) if session_id else 0.0
+async def agent_limits(request: Request, session_id: str | None = None):
+    uid = agent_auth.current_user_id(request)
+    sess = agent_store.get_session_credits(session_id, owner_id=uid) if session_id else 0.0
+    # When auth is on (uid != 'anon'), show this user's own daily/monthly
+    # usage; the global counters stay available as overall_*.
+    user_day = agent_store.get_user_today_credits(uid)
+    user_month = agent_store.get_user_month_credits(uid)
     return JSONResponse(
         {
             "session_credits": round(sess, 4),
             "session_limit": KIRA_SESSION_LIMIT,
-            "day_credits": round(agent_store.get_today_credits(), 4),
+            "day_credits": round(user_day, 4),
             "day_limit": KIRA_DAILY_LIMIT,
-            "month_credits": round(agent_store.get_month_credits(), 4),
+            "month_credits": round(user_month, 4),
             "month_limit": KIRA_MONTHLY_LIMIT,
+            "overall_day_credits": round(agent_store.get_today_credits(), 4),
+            "overall_month_credits": round(agent_store.get_month_credits(), 4),
+            "user_id": uid,
         }
     )
 
 
 @app.get("/agent/sessions/{sid}")
-async def agent_session_get(sid: str):
-    hist = _AGENT_SESSIONS.get(sid) or agent_store.load_history(sid)
+async def agent_session_get(sid: str, request: Request):
+    uid = agent_auth.current_user_id(request)
+    owner = agent_store.session_owner(sid)
+    if owner is not None and owner != uid:
+        raise HTTPException(status_code=404)
+    hist = _AGENT_SESSIONS.get((uid, sid)) or agent_store.load_history(sid, owner_id=uid)
     if hist is None:
         raise HTTPException(status_code=404)
     # Look up the saved model id (so the UI can pin it to the session).
@@ -920,15 +951,21 @@ class RenameRequest(BaseModel):
 
 
 @app.post("/agent/sessions/{sid}/rename")
-async def agent_session_rename(sid: str, req: RenameRequest):
-    ok = agent_store.rename_session(sid, req.title.strip()[:200])
+async def agent_session_rename(sid: str, req: RenameRequest, request: Request):
+    uid = agent_auth.current_user_id(request)
+    ok = agent_store.rename_session(sid, req.title.strip()[:200], owner_id=uid)
     return JSONResponse({"ok": ok})
 
 
 @app.delete("/agent/sessions/{sid}")
-async def agent_session_delete(sid: str):
+async def agent_session_delete(sid: str, request: Request):
+    uid = agent_auth.current_user_id(request)
+    _AGENT_SESSIONS.pop((uid, sid), None)
+    # legacy single-key entries (pre multi-user) also cleaned up
     _AGENT_SESSIONS.pop(sid, None)
-    ok = agent_store.delete_session(sid)
+    ok = agent_store.delete_session(sid, owner_id=uid)
+    if not ok:
+        return JSONResponse({"ok": False}, status_code=403 if agent_store.session_owner(sid) else 200)
     import os
     import shutil
 
@@ -956,7 +993,11 @@ def _safe_workspace(sid: str) -> str:
 
 
 @app.get("/agent/file/{session_id}/{path:path}")
-async def agent_file(session_id: str, path: str):
+async def agent_file(session_id: str, path: str, request: Request):
+    uid = agent_auth.current_user_id(request)
+    owner = agent_store.session_owner(session_id)
+    if owner is not None and owner != uid:
+        raise HTTPException(status_code=403, detail="forbidden")
     base = _safe_workspace(session_id)
     target = os.path.realpath(os.path.join(base, path))
     if not (target == base or target.startswith(base + os.sep)):
@@ -967,7 +1008,11 @@ async def agent_file(session_id: str, path: str):
 
 
 @app.post("/agent/upload/{sid}")
-async def agent_upload(sid: str, files: list[UploadFile] = File(...)):
+async def agent_upload(sid: str, request: Request, files: list[UploadFile] = File(...)):
+    uid = agent_auth.current_user_id(request)
+    owner = agent_store.session_owner(sid)
+    if owner is not None and owner != uid:
+        raise HTTPException(status_code=403, detail="forbidden")
     base = _safe_workspace(sid)
     os.makedirs(base, exist_ok=True)
     saved = []
@@ -988,9 +1033,11 @@ async def agent_upload(sid: str, files: list[UploadFile] = File(...)):
 
 
 @app.post("/agent/reset")
-async def agent_reset(req: AgentRequest):
-    if req.session_id and req.session_id in _AGENT_SESSIONS:
-        del _AGENT_SESSIONS[req.session_id]
+async def agent_reset(req: AgentRequest, request: Request):
+    uid = agent_auth.current_user_id(request)
+    if req.session_id:
+        _AGENT_SESSIONS.pop((uid, req.session_id), None)
+        _AGENT_SESSIONS.pop(req.session_id, None)
     return JSONResponse({"ok": True})
 
 

@@ -20,6 +20,7 @@ request counts for /agent/limits style introspection.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from collections import deque
@@ -28,6 +29,29 @@ from collections.abc import Iterable
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+ANON_USER_ID = "anon"
+
+
+def user_id_from_token(token: str | None) -> str:
+    """Deterministic per-token user identifier. Same token -> same user_id.
+
+    Empty/None token -> ANON_USER_ID (shared bucket for non-authed requests).
+    """
+    if not token:
+        return ANON_USER_ID
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def current_user_id(request: Request | None) -> str:
+    """Pull the user_id stamped by the middleware (or anon if absent)."""
+    if request is None:
+        return ANON_USER_ID
+    try:
+        v = getattr(request.state, "kira_user_id", None)
+    except Exception:
+        v = None
+    return v or ANON_USER_ID
 
 _DEFAULT_PUBLIC = (
     "/healthz",
@@ -95,10 +119,13 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # ---- bearer auth ----
+        token = self._extract_token(request)
         if self.tokens and not self._is_public(path):
-            token = self._extract_token(request)
             if token not in self.tokens:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
+        # Stamp user_id for downstream handlers (always — works whether auth
+        # is on or off; off => everyone is `anon`, same token => same user).
+        request.state.kira_user_id = user_id_from_token(token)
 
         # ---- rate limit on heavy endpoints ----
         if self._is_rate_limited(path, request.method):

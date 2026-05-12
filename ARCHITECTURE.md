@@ -227,7 +227,7 @@ Be honest about what's still rough:
 |---|---|---|
 | 1 | **LLM vendor lock-in on Amazon Q** — `q_client.py` speaks Bedrock binary event-stream; 5 call-sites in `agent_runtime.py` use Q schema directly. | Designing `llm/` abstraction layer (`base.py` + `q_provider.py` + `mock_provider.py`). MVP plan: 6 phases, ~5.5h. Other providers stubbed as plug-points. |
 | 2 | **Frontend is 1685 LOC of vanilla JS** (`static/app.js`) + 955 LOC `index.html`. No build, no framework. | Plan: split into ES modules (`chat.js`, `sse.js`, `tools.js`, …) via `<script type="module">`. No React rewrite. |
-| 3 | **No multi-user** — single shared `KIRA_AUTH_TOKEN`; Telegram bot has a hard-coded user-id allow-list. | Plan: lightweight `users(id, token_hash, name, created_at)` table; resolve bearer token → `user_id`; per-user session isolation. |
+| 3 | ~~**No multi-user**~~ — Done (multi-user lite). Bearer token is hashed to a 12-char `user_id`; sessions/credits/files isolated per user. Legacy NULL-owner rows visible to all and get claimed on first authed save. No user table — `user_id = sha256(token)[:12]`. |
 | 4 | **No CD** — CI exists (`ci.yml` runs pytest+coverage+ruff+codeql), but deploy is manual `rsync` + `systemctl restart`. | Added `.github/workflows/deploy.yml` (push to `main` → rsync → restart → smoke). Requires `PROD_SSH_KEY`, `PROD_HOST`, `PROD_USER`, `KIRA_URL`, `KIRA_AUTH_TOKEN` in repo secrets. |
 | 5 | Coverage gaps in `agent_critic` (86%), `agent_store` (88%), `agent_keys` (89%) | Lower priority. |
 | 6 | TG bot: no markdown rendering, no chunking >4096 chars, no voice/file input | Backlog. |
