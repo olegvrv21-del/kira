@@ -60,17 +60,19 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no "$USER@$HOST" \
             'sudo systemctl restart webchat && sleep 3 && systemctl is-active webchat'
 
-      - name: Smoke test
+      - name: Smoke test (via SSH → localhost)
         env:
-          KIRA_URL: ${{ secrets.KIRA_URL }}
+          HOST: ${{ secrets.PROD_HOST }}
+          USER: ${{ secrets.PROD_USER }}
           KIRA_AUTH_TOKEN: ${{ secrets.KIRA_AUTH_TOKEN }}
         run: |
-          # Minimal smoke: /healthz and /agent/health must return 200.
-          # Full smoke (tests/smoke_live.sh) requires SSH and is run manually.
+          # Public URL is behind exe.dev OAuth proxy, so smoke from GH runner
+          # would 503. We curl localhost:3000 over SSH instead.
           set -e
-          curl -fsS "$KIRA_URL/healthz" >/dev/null
-          curl -fsS -H "Authorization: Bearer $KIRA_AUTH_TOKEN" \
-            "$KIRA_URL/agent/health" | head -c 500
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "curl -fsS http://localhost:3000/healthz && \
+             curl -fsS -H 'Authorization: Bearer $KIRA_AUTH_TOKEN' \
+               http://localhost:3000/agent/health | head -c 500"
           echo
           echo "Deploy OK"
 
