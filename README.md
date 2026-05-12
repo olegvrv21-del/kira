@@ -1,14 +1,20 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/kira-noir.jpg" />
-    <img src="assets/kira-social.jpg" alt="Кира" width="640" />
+    <img src="assets/kira-social.jpg" alt="Kira" width="640" />
   </picture>
 </p>
 
-<h1 align="center">🌸 Кира</h1>
+<h1 align="center">🌸 Kira</h1>
 
 <p align="center">
-  <i>самомодифицирующийся AI-агент с веб-интерфейсом, sandbox и долговременной памятью</i>
+  <i>a self-modifying AI agent with a web UI, sandboxed tools, and long-term memory</i>
+</p>
+
+<p align="center">
+  🇬🇧 English
+  &nbsp;·&nbsp;
+  <a href="README.ru.md">🇷🇺 Русский</a>
 </p>
 
 <p align="center">
@@ -16,61 +22,82 @@
   <img src="https://img.shields.io/badge/coverage-93.5%25-brightgreen" alt="coverage" />
   <img src="https://img.shields.io/badge/tests-646-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
 </p>
 
 ---
 
-Кира — это полноценный AI-агент, который умеет редактировать собственный
-исходный код, гонять тесты, коммитить, ходить в браузер и помнить контекст
-между сессиями. Работает как FastAPI-сервис, общается с [Kiro Q](https://kiro.dev/)
-по HTTPS и поднимает чат-UI с 29 инструментами в Docker-песочнице.
+Kira is a full-fledged AI agent that can edit its own source code, run
+tests, commit to git, drive a browser, and remember context across
+sessions. She runs as a FastAPI service, streams responses over SSE,
+and exposes a chat UI with **29 tools** executed inside per-session
+Docker sandboxes.
+
+## Why Kira?
+
+|                          | Kira                             | OpenHands / Aider / Open Interpreter |
+|--------------------------|----------------------------------|--------------------------------------|
+| **Long-term memory**     | ✅ SQLite + notebook              | ❌                                   |
+| **Self-modify own code** | ✅ source bind-mounted            | ❌                                   |
+| **Tools**                | **29** (shell, FS, browser, git, tests, plan, subagents, skills) | ~10–15                |
+| **Skills system**        | ✅ markdown playbooks             | ❌                                   |
+| **Action history**       | ✅ one-click rollback             | partial                              |
+| **Per-session sandbox**  | ✅ Docker, 512MB / 1 CPU          | varies                               |
+| **Key pool & cost caps** | ✅ rotation, ban-lists, forecast | ❌                                   |
+| **Observability**        | ✅ `/agent/health`                | ❌                                   |
+| **Branding & UX**        | RU/EN UI, animated avatar        | bare-bones                           |
+| **Tests / Coverage**     | **646 tests, 93.5%**             | varies                               |
 
 ## Screenshots
 
 <table>
 <tr>
-  <td align="center" width="33%"><img src="assets/screenshots/01-main.png" alt="Chat" /><br/><sub><b>Чат</b> — брендированный UI, двуязычный, с пульсирующей аватаркой</sub></td>
-  <td align="center" width="33%"><img src="assets/screenshots/04-models.png" alt="Models" /><br/><sub><b>Модели</b> — выбор LLM с ценовыми множителями и тегами задач</sub></td>
-  <td align="center" width="33%"><img src="assets/screenshots/03-skills.png" alt="Skills" /><br/><sub><b>Skills</b> — подключаемые playbooks для специфичных доменов</sub></td>
+  <td align="center" width="33%"><img src="assets/screenshots/01-main.png" alt="Chat" /><br/><sub><b>Chat</b> — branded UI, RU/EN, animated avatar</sub></td>
+  <td align="center" width="33%"><img src="assets/screenshots/04-models.png" alt="Models" /><br/><sub><b>Models</b> — pick LLM with cost multipliers + task tags</sub></td>
+  <td align="center" width="33%"><img src="assets/screenshots/03-skills.png" alt="Skills" /><br/><sub><b>Skills</b> — pluggable playbooks for specific domains</sub></td>
 </tr>
 </table>
 
 ## Stack
 
 - **Backend**: FastAPI + uvicorn (Python 3.11+)
-- **Storage**: SQLite (`agent_sessions.db`) — sessions, actions, session_meta
-- **LLM**: Amazon Q API (`q.us-east-1.amazonaws.com`), Bearer ksk token
-- **Sandbox**: Docker (`kira-sandbox:latest`, based on Playwright Python image) —
-  each session gets its own container with a writable bind-mount of the source tree
-- **Frontend**: vanilla HTML/JS, SSE for streaming, plain CSS
+- **Storage**: SQLite (`agent_sessions.db`) — sessions, actions, session metadata
+- **LLM**: Amazon Q API (`q.us-east-1.amazonaws.com`) via Bearer `ksk_` token
+- **Sandbox**: Docker (`kira-sandbox:latest`, Playwright Python base) —
+  one container per session with a writable bind-mount of the source tree
+- **Frontend**: vanilla HTML/JS, SSE streaming, plain CSS
 
 ## Tools (29)
 
-| Category | Tools |
-|---|---|
-| Shell / FS | `execute_bash`, `fs_read`, `fs_write`, `glob`, `grep`, `change_dir`, `patch` |
-| Code intel | `keyword_search`, `outline`, `verify_change` |
+| Category   | Tools                                                                                                                                                              |
+|------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Shell / FS | `execute_bash`, `fs_read`, `fs_write`, `glob`, `grep`, `change_dir`, `patch`                                                                                       |
+| Code intel | `keyword_search`, `outline`, `verify_change`                                                                                                                       |
 | Browser    | `browser_navigate`, `browser_text`, `browser_eval`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_console_logs`, `browser_network`, `browser_accessibility`, `browser_emulate` |
-| Git        | `git`, `git_commit` |
-| Build / QA | `run_tests`, `lint` |
-| Meta       | `use_subagent`, `load_skill`, `plan`, `llm_one_shot`, `output_iframe` |
+| Git        | `git`, `git_commit`                                                                                                                                                |
+| Build / QA | `run_tests`, `lint`                                                                                                                                                |
+| Meta       | `use_subagent`, `load_skill`, `plan`, `llm_one_shot`, `output_iframe`                                                                                              |
 
 ## Features
 
 - **Action history & rollback** — every `fs_write` / `patch` stores a backup;
-  one click restores any past edit, with inline unified diff.
-- **Plan UI** — agent maintains a visible checklist (pending / in_progress / done / skipped).
-- **Self-edit** — with `KIRA_SELF_EDIT=1` the source tree is bind-mounted into
-  the sandbox at `/host/webchat:rw`, so Кира can modify her own files and commit
-  them via `git_commit`.
-- **Long-term memory** — notebook directory mounted at `/host/notebook` for
-  cross-session notes (`STATUS.md`, `JOURNAL.md`, `TODO.md`, ...).
+  one click restores any past edit with an inline unified diff.
+- **Plan UI** — the agent maintains a visible checklist (pending / in_progress / done / skipped).
+- **Self-edit** — with `KIRA_SELF_EDIT=1` the source tree is bind-mounted
+  into the sandbox at `/host/webchat:rw`, so Kira can modify her own files
+  and commit them via `git_commit`.
+- **Long-term memory** — a notebook directory is mounted at `/host/notebook`
+  for cross-session notes (`STATUS.md`, `JOURNAL.md`, `TODO.md`, …).
 - **Skills** — markdown playbooks loaded on demand (`browser-automation`,
-  `git-workflow`, `testing`, `python-project`, ...).
-- **Daily backups** — systemd timer dumps source + DB + notebook to `~/backups/`,
-  keeps 14 days.
-- **Models selector** — UI lets you pick model tier (Opus / Sonnet / Haiku) per task.
+  `git-workflow`, `testing`, `python-project`, …).
+- **Daily backups** — a systemd timer dumps source + DB + notebook to
+  `~/backups/`, keeping 14 days of history.
+- **Model selector** — the UI lets you pick a model tier (Opus / Sonnet / Haiku) per task.
 - **Multimodal** — image input via base64 in the request body.
+- **Health endpoint** — `/agent/health` returns status, in-flight count,
+  key-pool state, credit forecast, and 24h tool stats.
+- **Telegram alerts** — systemd timer polls `/agent/health` every 5 min
+  and pings you on status transitions (see `ops/`).
 
 ## Layout
 
@@ -81,38 +108,38 @@ agent_tool_specs.json # OpenAPI-style tool schema sent to Q
 agent_system_prompt.txt
 agent_store.py        # SQLite layer
 sandbox_runtime.py    # spawns + talks to per-session Docker container
-sandbox_tools.py      # sandbox-mode tools (extended browser, git, run_tests, ...)
+sandbox_tools.py      # sandbox-mode tools (extended browser, git, run_tests, …)
 sandbox/              # Dockerfile, browser_daemon.py, entrypoint.sh
 app.py                # FastAPI endpoints, SSE
 index.html            # frontend
 q_client.py           # Kiro Q API client
-ops/                  # systemd units, backup.sh
+ops/                  # systemd units, backup.sh, health_alert.sh
 skills/               # markdown playbooks
-tests/                # 52 pytest + 12-check smoke script
+tests/                # pytest + smoke script
 ```
 
 ## Quick start
 
-### 🐳 Docker (рекомендуется)
+### 🐳 Docker (recommended)
 
 ```bash
 git clone https://github.com/olegvrv21-del/kira.git && cd kira
 ./install.sh docker          # builds image, generates auth token, starts
 ```
 
-→ Открой http://localhost:3000/. Токен в `.env` (`KIRA_AUTH_TOKEN`).
+→ open http://localhost:3000/. The auth token is in `.env` (`KIRA_AUTH_TOKEN`).
 
-### 🐍 Venv (без Docker)
+### 🐍 Venv (without Docker)
 
 ```bash
 ./install.sh venv
 source .env && .venv/bin/uvicorn app:app --host 0.0.0.0 --port 3000
 ```
 
-### 🚀 Systemd (продакшен)
+### 🚀 Systemd (production)
 
 ```bash
-./install.sh systemd         # ставит venv + регистрирует kira.service
+./install.sh systemd         # venv mode + registers kira.service
 systemctl status kira
 ```
 
@@ -130,20 +157,21 @@ For full sandbox isolation per session also set `KIRA_SANDBOX=1` and build the s
 docker build -t kira-sandbox:latest sandbox/
 ```
 
-См. `.env.example` — все переменные с описанием.
+See `.env.example` — every environment variable is documented there.
 
 ## Tests
 
 ```bash
-make test    # 52 pytest
-make smoke   # 12 live checks against running service
+make test    # pytest suite (646 tests)
+make smoke   # live HTTP checks against running service
 make all     # both
 ```
 
 ## Status
 
-Phases 1–5 + iterations A/B/C complete. All tests green. Next planned:
-real LSP integration (pyright + typescript-language-server).
+Production-grade. 646 tests at 93.5% coverage, CI green, deployed on disk-photon.exe.xyz.
+Next: real LSP integration (pyright + typescript-language-server), Telegram frontend
+via `hermes-gateway`.
 
 ## Documentation
 
