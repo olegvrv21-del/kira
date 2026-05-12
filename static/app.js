@@ -1,6 +1,18 @@
-// Kira webchat entry module. Imports auth + i18n modules.
+// Kira webchat entry module. Pulls in side-effect-free helpers from focused
+// modules and keeps the (still large) state machine here. Future passes will
+// extract more: sessions persistence, plan rendering, SSE plumbing.
 import { installFetchInterceptor } from './auth.js';
 import { I18N } from './i18n.js';
+import {
+  pct,
+  fmtSize,
+  makeId,
+  fileToDataUrl,
+  copyToClipboard,
+  downloadFile,
+  safeFilename,
+} from './utils.js';
+import { renderMarkdown } from './markdown.js';
 
 installFetchInterceptor();
 
@@ -145,15 +157,6 @@ installFetchInterceptor();
     /* chats */
     function loadChats() { try { chats = JSON.parse(localStorage.getItem(LS_CHATS) || '[]') || []; } catch { chats = []; } }
     function saveChats() { localStorage.setItem(LS_CHATS, JSON.stringify(chats)); }
-    function makeId() {
-      // Use cryptographically strong randomness (avoids Math.random predictability;
-      // also satisfies CodeQL js/insecure-randomness for IDs used in session paths).
-      const buf = new Uint8Array(6);
-      (self.crypto || self.msCrypto).getRandomValues(buf);
-      let s = '';
-      for (const b of buf) s += b.toString(36).padStart(2, '0');
-      return Date.now().toString(36) + s.slice(0, 8);
-    }
     function deriveTitle(h) {
       const u = h.find(m => m.role === 'user');
       if (!u) return t('new_chat');
@@ -472,7 +475,6 @@ installFetchInterceptor();
     }
     function clearPlan() { renderPlan({items:[]}); }
 
-    function pct(x) { return x == null ? '—' : (x * 100).toFixed(1) + '%'; }
 
     async function loadMetrics() {
       const body = document.getElementById('metrics-body');
@@ -753,7 +755,6 @@ installFetchInterceptor();
     document.getElementById('u-refresh').addEventListener('click', loadUsage);
 
     /* files */
-    function fmtSize(b) { if (b<1024) return b+' B'; if (b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
     function renderAttachments() {
       attachmentsEl.innerHTML = '';
       pendingFiles.forEach((f, i) => {
@@ -764,7 +765,6 @@ installFetchInterceptor();
         chip.appendChild(label); chip.appendChild(x); attachmentsEl.appendChild(chip);
       });
     }
-    function fileToDataUrl(f) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); }); }
     async function ingestFiles(list) {
       for (const f of list) {
         const isImage = f.type.startsWith('image/');
@@ -799,28 +799,6 @@ installFetchInterceptor();
       let combined = text || '';
       for (const f of files) if (f.text != null) combined += `\n\n[file: ${f.name}]\n${f.text}`;
       return combined;
-    }
-    function renderMarkdown(span, text) {
-      try {
-        const html = DOMPurify.sanitize(marked.parse(text || '', { gfm: true, breaks: true }));
-        span.innerHTML = html;
-        if (window.hljs) {
-          span.querySelectorAll('pre code').forEach(el => {
-            try { hljs.highlightElement(el); } catch {}
-          });
-        }
-      } catch { span.textContent = text || ''; }
-    }
-    function copyToClipboard(text) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        return navigator.clipboard.writeText(text);
-      }
-      // fallback
-      const ta = document.createElement('textarea'); ta.value = text;
-      ta.style.position = 'fixed'; ta.style.left = '-9999px';
-      document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); } finally { ta.remove(); }
-      return Promise.resolve();
     }
     function attachCopyAction(wrap, getText, opts = {}) {
       const actions = document.createElement('div'); actions.className = 'msg-actions';
@@ -1418,13 +1396,6 @@ installFetchInterceptor();
     });
 
     /* export current session to .md */
-    function downloadFile(name, content) {
-      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = name;
-      document.body.appendChild(a); a.click();
-      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-    }
     function exportChatToMd() {
       const c = chats.find(x => x.id === activeChatId);
       if (!c || !c.history || !c.history.length) { alert(t('export_empty')); return; }
@@ -1435,7 +1406,7 @@ installFetchInterceptor();
           : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
         lines.push(m.role === 'user' ? '## 👤 User' : '## 🤖 Assistant', '', txt, '');
       }
-      const safeTitle = (c.title || 'chat').replace(/[^\w\-]+/g, '_').slice(0, 60) || 'chat';
+      const safeTitle = safeFilename(c.title || 'chat');
       downloadFile(`${safeTitle}.md`, lines.join('\n'));
     }
     async function exportAgentToMd() {
