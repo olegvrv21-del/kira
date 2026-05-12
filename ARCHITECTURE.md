@@ -110,18 +110,19 @@ Specs live in `agent_tool_specs.json` (OpenAI/Anthropic function-calling shape).
 
 | File                       | LOC  | Responsibility                                                  |
 |----------------------------|------|-----------------------------------------------------------------|
-| `app.py`                   | 1032 | FastAPI routes, SSE streaming, auth, request validation          |
-| `agent_runtime.py`         | 1273 | Agent loop, tool-call dispatch, streaming protocol, subagents    |
+| `app.py`                   | 1120 | FastAPI routes, SSE streaming, auth, request validation          |
+| `agent_runtime.py`         | 1053 | Agent loop, tool-call dispatch, streaming protocol, subagents    |
 | `sandbox_tools.py`         | 1430 | Implementation of all 38 tools                                   |
 | `agent_tools.py`           |  515 | Tool registry, schema validation, audit log                      |
 | `agent_memory.py`          |  364 | Long-term memory: SQLite + optional embeddings (`memory_*`)      |
-| `agent_store.py`           |  471 | Session/transcript persistence (`agent_sessions.db`)             |
+| `agent_store.py`           |  562 | Session/transcript persistence (`agent_sessions.db`)             |
 | `agent_hooks.py`           |  308 | Pre/post-tool hooks, configured in `hooks.json`                  |
-| `agent_critic.py`          |   ~  | Self-review pass over generated diffs                            |
-| `agent_skills.py`          |   ~  | Loads `skills/*.md` on demand                                    |
-| `agent_coverage.py`        |   ~  | pytest-cov integration for self-test                             |
-| `agent_auth.py`            |   ~  | Bearer-token middleware                                          |
-| `agent_keys.py`            |   ~  | API key rotation / reload                                        |
+| `agent_critic.py`          |  137 | Self-review pass over generated diffs                            |
+| `agent_skills.py`          |   89 | Loads `skills/*.md` on demand                                    |
+| `agent_coverage.py`        |  113 | pytest-cov integration for self-test                             |
+| `agent_auth.py`            |  277 | Bearer-token middleware, per-TG-user derived tokens (whitelist)  |
+| `agent_keys.py`            |  135 | API key rotation / reload                                        |
+| `llm/*.py`                 |  ~1k | Provider abstraction: `base`, `q_provider`, `openrouter_provider`, `mock_provider` |
 | `q_client.py`              |   ~  | Subagent / LLM client wrapper                                    |
 | `sandbox_runtime.py`       |   ~  | Sandbox path resolution, security checks                         |
 | `browser_daemon.py`        |   ~  | Persistent Playwright instance for browser_* tools               |
@@ -134,7 +135,13 @@ Specs live in `agent_tool_specs.json` (OpenAI/Anthropic function-calling shape).
 | File                  | Purpose                                                |
 |-----------------------|--------------------------------------------------------|
 | `index.html`          | Single-page web UI (chat, models, skills, sessions)    |
-| `static/app.js`       | Chat logic, SSE parsing, tool-call rendering           |
+| `static/app.js`       | Chat shell, sessions, settings, tool-card builders (1174 LOC) |
+| `static/agent_sse.js` | `createAgentRunner` — `sendAgent` SSE driver (14 event types, 333 LOC) |
+| `static/dashboard.js` | Health / metrics / keys / coverage panels (242 LOC)    |
+| `static/skills.js`    | Skill list + content rendering (51 LOC)                |
+| `static/plan.js`      | Plan-tree rendering (31 LOC)                           |
+| `static/utils.js`     | pct/fmtSize/makeId/fileToDataUrl/copyToClipboard…       |
+| `static/markdown.js`  | renderMarkdown + DOMPurify wrappers                    |
 | `static/auth.js`      | Token entry / storage                                  |
 | `static/i18n.js`      | RU/EN switcher                                         |
 | `static/brand-mark.jpg` | Avatar in topbar (orange pulse animation)            |
@@ -173,7 +180,7 @@ Production lives on `disk-photon.exe.xyz` as `webchat.service`
 
 ## 9. Tests (`tests/`)
 
-646 tests, 93.5% coverage. Naming mirrors modules:
+823 tests, ~94% coverage (critic 98%, keys 98%, store 98%). Naming mirrors modules:
 `test_<module>.py` covers `<module>.py`. Highlights:
 
 - `test_app_*.py` — HTTP layer (endpoints, streaming, helpers)
@@ -183,7 +190,9 @@ Production lives on `disk-photon.exe.xyz` as `webchat.service`
 - `test_hooks*.py`, `test_critic.py`, `test_plan.py`, `test_skills_coverage.py`
 - `smoke_live.sh` — 19 live-prod assertions (run after deploy)
 
-Gaps still open: `agent_critic` 86.4%, `agent_store` 87.6%, `agent_keys` 89.2%.
+Coverage uplift round (commit `ee2fbff`) closed the long-standing gaps:
+`agent_critic` 86.4% → **98.3%**, `agent_keys` 89.2% → **97.6%**,
+`agent_store` 87.6% → **98.4%** (see `tests/test_coverage_uplift.py`).
 
 ---
 
@@ -226,10 +235,13 @@ Be honest about what's still rough:
 | # | Limitation | Status / plan |
 |---|---|---|
 | 1 | ~~**LLM vendor lock-in on Amazon Q**~~ | **Done (all phases).** `llm/` abstraction layer (see [`llm/README.md`](llm/README.md)): `base.py` (Message/ToolCall/ToolSpec/StreamEvent/Usage + `LLMProvider` protocol), `q_provider.py` (with bidirectional Q‑dict↔Message[] converters), `mock_provider.py`, `__init__.get_provider()` selects via `KIRA_LLM_PROVIDER`. `_llm_one_shot`, `_run_subagent_silent`, and the main `run_agent` all operate on canonical `list[Message]`; runtime no longer touches Q‑shape. SQLite still stores Q dicts for back‑compat (`agent_session_get` parses them). Adding a new provider = `<vendor>_provider.py` with a converter + StreamEvent parser; runtime stays untouched. Coverage 91.4% on `llm/`. |
-| 2 | ~~**Frontend is 1685 LOC of vanilla JS**~~ | **In progress (phase 1 done).** Native ESM, no bundler. Extracted `static/utils.js` (pct/fmtSize/makeId via `crypto.getRandomValues`/fileToDataUrl/copyToClipboard/downloadFile/safeFilename) and `static/markdown.js` (renderMarkdown + DOMPurify wrappers). `app.js` 1685 → 1656 LOC. Remaining ~1656 LOC to split by domain (sessions / SSE / plan / dashboard / tools) over future sessions. |
+| 2 | ~~**Frontend is 1685 LOC of vanilla JS**~~ | **In progress (phases 1–3 done).** Native ESM, no bundler. Extracted: `utils.js` + `markdown.js` (phase 1), `plan.js` (31) + `skills.js` (51) + `dashboard.js` (242) (phase 2, commit `5e0df37`), `agent_sse.js` (333 LOC — `createAgentRunner` driving the SSE loop over 14 event types) (phase 3, commit `5688838`). `app.js` 1685 → **1174 LOC** (-30%). Modules use a ctx-object pattern (pure functions take `{t, els, getCurrentModel, …}`) — no globals leaked. Remaining ~1174 LOC: sessions persistence (~80), agent-sessions list/budget (~150), tool-card builders (~180), non-agent `/chat` handler (~70). |
 | 3 | ~~**No multi-user**~~ | **Done (multi-user lite).** Bearer token → `sha256(token)[:12]` = `user_id`; empty token → `anon`. `sessions.owner_id` column + `user_credits(user_id, day)` table. All session/credit/plan/file/upload endpoints owner-scoped; `/agent` rejects foreign sids with 403; in-memory cache key is `(user_id, sid)`. Legacy NULL-owner rows visible to everyone for back-compat and claimed on first authed save. No users table required. |
 | 4 | ~~**No CD**~~ | **Done.** `.github/workflows/deploy.yml`: push to `main` → rsync via SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `curl http://localhost:3000/healthz` over SSH (public URL is OAuth-walled and returns 503 to Actions). TG alert on failure. Repo secrets: `PROD_SSH_KEY`, `PROD_HOST`, `PROD_USER`, `KIRA_URL`, `KIRA_AUTH_TOKEN`. Push-to-prod latency ~50s. |
-| 5 | Coverage gaps in `agent_critic` (86%), `agent_store` (88%), `agent_keys` (89%) | Lower priority. |
+| 5 | ~~Coverage gaps in `agent_critic` (86%), `agent_store` (88%), `agent_keys` (89%)~~ | **Done (commit `ee2fbff`).** `tests/test_coverage_uplift.py` (19 tests, 287 LOC) lifts critic → 98.3%, keys → 97.6%, store → 98.4%. Suite 804 → 823 passed. |
 | 6 | ~~TG bot: no markdown, no chunking, no voice/file input~~ | **Done.** Markdown parse_mode with fallback to plain on 400; `split_into_chunks` (3900-char limit, break on `\n\n` > `\n` > space, balance code fences across chunks). Photo upload → base64 → `/agent images:[]` (magic-byte format detection, 8MB cap). Voice transcription pluggable: `KIRA_TG_WHISPER=faster-whisper` (local CPU tiny ~75MB) or `groq` (Whisper-large-v3-turbo); off by default, transcript echoed in italics before processing. |
+| 7 | Multi-user TG bot derived-token whitelist | **Done.** `KIRA_TG_ALLOWED_USERS` env (comma-separated TG user IDs) gates `agent_auth.derive_tg_token`; bogus IDs → 401. Configured on prod via `webchat.service.d/override.conf`. |
+| 8 | Second LLM backend / BYOK | **Done — provider shipped, not yet activated on prod.** `llm/openrouter_provider.py` (381 LOC, commit `9c1849a`, 18 tests, registered in `llm/__init__.py`). Activate via `KIRA_LLM_PROVIDER=openrouter` + `OPENROUTER_API_KEY` — same canonical Message/ToolCall/StreamEvent contract, no runtime changes. |
+| 9 | Off-VM disaster recovery | **Done.** Private `kira-vault` GitHub repo, git-crypt encrypted (`etc/**`, `notebook/SECRETS.md`, …, plus `*.gpg`). Daily systemd timer `kira-vault-sync.timer` → `sync.sh` collects configs (sudoers-whitelisted `cat`) + notebook, commits, pushes. `RESTORE.md` documents the bare-metal drill. |
 
 See `~/notebook/TODO.md` on the prod VM for the live work queue.

@@ -5,6 +5,71 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Adheres to [Se
 
 ---
 
+## [0.4.0] — unreleased — «Resilience & Coverage»
+
+Session focused on filling the long-standing coverage gaps, splitting the
+frontend further, hardening multi-user auth, and putting disaster recovery
+on rails.
+
+### Added
+- **`llm/openrouter_provider.py`** (381 LOC, 18 tests, commit `9c1849a`) —
+  second backend on the canonical `LLMProvider` protocol. BYOK: 100+ models
+  via OpenRouter. Activate with `KIRA_LLM_PROVIDER=openrouter` +
+  `OPENROUTER_API_KEY`. Same Message / ToolCall / StreamEvent contract —
+  runtime unchanged.
+- **Per-TG-user derived bearer tokens** (commit `6349386` + this session):
+  `agent_auth.derive_tg_token(tg_user_id)` =
+  `hmac_sha256(KIRA_TG_DERIVE_SECRET, tg_user_id)`. Whitelist enforced via
+  `KIRA_TG_ALLOWED_USERS` (comma-separated user IDs); bogus derived tokens
+  → 401. Deployed on prod via `webchat.service.d/override.conf`.
+- **Frontend phase 2** (commit `5e0df37`): `static/plan.js` (31),
+  `static/skills.js` (51), `static/dashboard.js` (242). `app.js` 1656 → 1425.
+- **Frontend phase 3** (commit `5688838`): `static/agent_sse.js` (333 LOC) —
+  `createAgentRunner` factory driving the SSE event loop over 14 event types
+  (`text` / `tool_call` / `subagent_*` / `critic` / `dev_loop_*` / `hook` /
+  `tool_result` / `throttle` / `cancelled` / `done` / `error` / `iframe` /
+  `plan` / `meta`). `app.js` 1425 → **1174 LOC** (-30% from 1685 start).
+  Modules use a ctx-object pattern — no globals leaked.
+- **Coverage uplift** (commit `ee2fbff`): `tests/test_coverage_uplift.py`
+  (19 tests, 287 LOC). `agent_critic` 86.4 → **98.3%**, `agent_keys`
+  89.2 → **97.6%**, `agent_store` 87.6 → **98.4%**. Suite 804 → **823** passed.
+- **Off-VM disaster recovery** — private `kira-vault` repo with `git-crypt`
+  (encrypts `etc/**`, `notebook/SECRETS.md`, `WEBCHAT.md`, `JOURNAL.md`,
+  `SHELLEY_HISTORY.md`, `**/*.gpg`; plain: `README` / `STATUS` / `TODO` /
+  systemd unit templates / `RESTORE.md` / `INVENTORY.md` / `sync.sh`).
+  Daily timer `kira-vault-sync.timer` → `kira-vault-sync.service` →
+  `~/kira-vault/scripts/sync.sh`. Sudoers snippet whitelists `/bin/cat` on
+  13 specific paths so `sync.sh` runs as `exedev`.
+- `tests/test_endpoints.py::test_static_agent_sse_js_served` — guards the
+  `'type === "iframe"'` literal that moved out of `app.js`.
+
+### Changed
+- `tests/test_endpoints.py::test_static_app_js_served` now asserts
+  `'createAgentRunner'` instead of the iframe literal (commit `cc77863`).
+- `tests/smoke_live.sh` root_iframe probe re-pointed at `/static/agent_sse.js`.
+- README / README.ru / `ARCHITECTURE.md` test count 710 → 823; coverage
+  gaps marked closed; frontend split status updated through phase 3.
+
+### Fixed
+- TG whitelist hole: prod `webchat.service` was missing `KIRA_TG_ALLOWED_USERS`,
+  so derived tokens for arbitrary TG IDs were accepted. Added override
+  (`KIRA_TG_ALLOWED_USERS=6847411471`), daemon-reload + restart.
+- `restore_pool` fixture in `test_coverage_uplift.py` must snapshot
+  `agent_keys.key_pool._pool/_state/_idx` and restore in-place (using
+  `key_pool.reload()`, **not** `importlib.reload(agent_keys)` — the latter
+  breaks `app.py`'s captured reference and leaks into `test_health_endpoint`).
+- First vault sync accidentally committed plaintext secrets; history
+  force-pushed clean to a single commit. Orphan blobs expire via GitHub gc.
+
+### Stats
+- Tests: 710 → **823** passed (+113).
+- Coverage: critic 98.3% / keys 97.6% / store 98.4% (all targets met).
+- `app.js`: 1685 → **1174 LOC** (-30%) across 9 ES modules.
+- New providers: 1 (`openrouter`).
+- New systemd timers: 1 (`kira-vault-sync.timer`).
+
+---
+
 ## [0.3.0] — 2026-05-12 — «Provider-agnostic, multi-user, push-to-prod»
 
 Large architectural session that closed five of the six items on the
@@ -138,5 +203,7 @@ Major session focused on test coverage, observability, mobile UX, and full brand
 
 ---
 
-[0.2.0]: https://github.com/olegvrv21-del/kira/compare/0.1.0...main
+[0.4.0]: https://github.com/olegvrv21-del/kira/compare/0.3.0...main
+[0.3.0]: https://github.com/olegvrv21-del/kira/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/olegvrv21-del/kira/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/olegvrv21-del/kira/releases/tag/0.1.0

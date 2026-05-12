@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-710-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-823-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
 </p>
 
@@ -91,10 +91,16 @@
 - **LLM provider abstraction** (`llm/`) — см. [`llm/README.md`](llm/README.md).
   `base.py` (Message / ToolCall / StreamEvent / `LLMProvider` protocol) +
   `q_provider.py` (с би-конвертерами Q-dict↔Message[]) +
-  `mock_provider.py`, выбор через `KIRA_LLM_PROVIDER`. Весь runtime
+  `mock_provider.py` + `openrouter_provider.py` (BYOK: 100+ моделей через
+  OpenRouter), выбор через `KIRA_LLM_PROVIDER`. Весь runtime
   (`run_agent`, `_llm_one_shot`, `_run_subagent_silent`) работает на канонических
   сообщениях — vendor lock-in сломан. Добавить провайдера = вписать
   `<vendor>_provider.py`, runtime не трогаем.
+- **Off-VM disaster recovery** — приватный репо `kira-vault` с
+  `git-crypt`-шифрованием всех конфигов/секретов/notebook; ежедневный
+  systemd-таймер пушит снапшот, `RESTORE.md` описывает восстановление.
+- **TG multi-user whitelist** — `KIRA_TG_ALLOWED_USERS` фильтрует
+  derived-токены (один на TG user id), бот можно выставлять публично.
 - **Push-to-prod CD** — `.github/workflows/deploy.yml`: push в `main` → rsync
   по SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `/healthz`
   → TG-alert при ошибке. Латенси ~50с.
@@ -115,7 +121,7 @@ index.html            # frontend
 q_client.py           # Kiro Q API client
 ops/                  # systemd units, backup.sh
 skills/               # markdown playbooks
-tests/                # 710 pytest + smoke script
+tests/                # 823 pytest + smoke script
 ```
 
 ## Quick start
@@ -162,22 +168,23 @@ docker build -t kira-sandbox:latest sandbox/
 ## Tests
 
 ```bash
-make test    # 710 pytest
-make smoke   # live HTTP-проверки против живого сервиса
+make test    # 823 pytest, ~94% coverage
+make smoke   # 19 live HTTP-проверок
 make all     # both
 ```
 
 ## Status
 
-Production-grade. 710 тестов при ~94% покрытии, CI зелён, push-to-prod CD
-живой, развёрнута на disk-photon.exe.xyz. LLM provider abstraction готова;
-multi-user lite в проде; Telegram-фронтенд с markdown + photo + voice.
-Дальше: реальная LSP-интеграция (pyright + typescript-language-server)
-и дальнейшее дробление фронтенда.
+Production-grade. **823 тестов** при ~94% покрытии (critic/keys/store все >97%),
+CI зелён, push-to-prod CD живой, развёрнута на `disk-photon.exe.xyz`. LLM
+abstraction готова с **двумя провайдерами** (Q в проде, OpenRouter на полке);
+multi-user lite + TG-whitelist; фронтенд разбит до фазы 3 (`app.js`
+1685 → 1174 LOC по 9 ES-модулям); off-VM disaster recovery через `kira-vault`.
+Дальше: LSP-интеграция (pyright + typescript-language-server) и фронтенд фаза 4.
 
 ## Documentation
 
-- [CHANGELOG.md](CHANGELOG.md) — release history (current: **0.2.0** — Brand & Observability)
+- [CHANGELOG.md](CHANGELOG.md) — release history (current: **0.4.0** — Resilience & Coverage)
 - [LICENSE](LICENSE) — MIT
 
 ## License

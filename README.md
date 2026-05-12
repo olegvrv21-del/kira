@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-710-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-823-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
 </p>
@@ -48,8 +48,8 @@ Docker sandboxes.
 | **Key pool & cost caps** | ✅ rotation, ban-lists, forecast | ❌                                   |
 | **Observability**        | ✅ `/agent/health`                | ❌                                   |
 | **Branding & UX**        | RU/EN UI, animated avatar        | bare-bones                           |
-| **Tests / Coverage**     | **710 tests, ~94%**              | varies                               |
-| **LLM provider abstraction** | ✅ pluggable (Q today, others ready) | partial               |
+| **Tests / Coverage**     | **823 tests, ~94%**              | varies                               |
+| **LLM provider abstraction** | ✅ pluggable (Q live; OpenRouter shipped) | partial          |
 | **Multi-user (lite)**    | ✅ per-token session isolation    | partial                              |
 | **Telegram frontend**    | ✅ markdown + photo + voice       | varies                               |
 | **Push-to-prod CD**      | ✅ GitHub Actions, ~50s           | varies                               |
@@ -115,10 +115,16 @@ Docker sandboxes.
 - **LLM provider abstraction** (`llm/`) — see [`llm/README.md`](llm/README.md).
   `base.py` (Message / ToolCall / StreamEvent / `LLMProvider` protocol) +
   `q_provider.py` (with bidirectional Q-dict↔Message[] converters) +
-  `mock_provider.py`, selectable via `KIRA_LLM_PROVIDER`. The entire runtime
+  `mock_provider.py` + `openrouter_provider.py` (BYOK: 100+ models via
+  OpenRouter), selectable via `KIRA_LLM_PROVIDER`. The entire runtime
   (`run_agent`, `_llm_one_shot`, `_run_subagent_silent`) operates on canonical
   messages — vendor lock-in is broken. Adding a new provider = drop in
   `<vendor>_provider.py`, no runtime changes.
+- **Off-VM disaster recovery** — private `kira-vault` repo with `git-crypt`
+  encrypts all configs/secrets/notebook; daily systemd timer pushes;
+  `RESTORE.md` documents bare-metal recovery.
+- **TG multi-user whitelist** — `KIRA_TG_ALLOWED_USERS` gates derived
+  bearer tokens (one per TG user id), so the bot can be safely public.
 - **Push-to-prod CD** — `.github/workflows/deploy.yml`: push to `main` → rsync
   over SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `/healthz`
   → TG alert on failure. ~50s latency, fully automated.
@@ -186,22 +192,24 @@ See `.env.example` — every environment variable is documented there.
 ## Tests
 
 ```bash
-make test    # pytest suite (710 tests)
-make smoke   # live HTTP checks against running service
+make test    # pytest suite (823 tests, ~94% coverage)
+make smoke   # 19 live HTTP checks against running service
 make all     # both
 ```
 
 ## Status
 
-Production-grade. 710 tests at ~94% coverage, CI green, push-to-prod CD active,
-deployed on disk-photon.exe.xyz. LLM provider abstraction complete; multi-user
-lite live; Telegram frontend supports markdown + image + voice. Next: real LSP
-integration (pyright + typescript-language-server) and further frontend
-modularisation.
+Production-grade. **823 tests** at ~94% coverage (critic/keys/store all >97%),
+CI green, push-to-prod CD active, deployed on `disk-photon.exe.xyz`. LLM
+abstraction complete with **two providers shipped** (Q live, OpenRouter ready);
+multi-user lite + TG whitelist live; Telegram frontend supports markdown + image +
+voice; off-VM disaster recovery via encrypted `kira-vault`. Frontend split through
+phase 3 (`app.js` 1685 → 1174 LOC across 9 ES modules). Next: real LSP
+integration (pyright + typescript-language-server) and frontend phase 4.
 
 ## Documentation
 
-- [CHANGELOG.md](CHANGELOG.md) — release history (current: **0.2.0** — Brand & Observability)
+- [CHANGELOG.md](CHANGELOG.md) — release history (current: **0.4.0** — Resilience & Coverage)
 - [LICENSE](LICENSE) — MIT
 
 ## License
