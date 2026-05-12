@@ -955,6 +955,17 @@ async def run_agent(
                     return
 
             # ----- execute tools, stream tool_results ------------------------
+            # Tool-call dispatch goes through agent_tool_handlers's registry.
+            # Each handler is a self-contained async generator that yields:
+            #   * bytes — raw SSE frames written straight to the client;
+            #   * ToolResult — terminator (status / output / images / diff /
+            #     action_id / extra_sse fields merged into the tool_result frame).
+            # The loop body here only builds the per-call context, drives the
+            # handler, emits the standardised tool_result, and appends a
+            # canonical `tool` Message to history. Adding a new specialised
+            # built-in is now a single function + a `register("name", fn)` call.
+            from agent_tool_handlers import ToolContext, ToolResult, get as _get_handler
+
             tool_results_for_history: list[_M] = []
 
             for tc in tool_calls_emitted:
@@ -963,267 +974,49 @@ async def run_agent(
                 args = tc.arguments or {}
                 yield _sse({"type": "tool_call", "id": tid, "name": name, "input": args})
 
-                # ---- built-in tool: llm_one_shot ----
-                if name == "llm_one_shot":
-                    sub_model = (args.get("model") or "claude-haiku-4.5").strip()
-                    if sub_model.startswith("q/"):
-                        sub_model = sub_model[2:]
-                    out = await _llm_one_shot(
-                        api_key,
-                        args.get("prompt") or "",
-                        sub_model,
-                        system=args.get("system"),
-                        max_tokens=args.get("max_tokens"),
+                ctx = ToolContext(
+                    api_key=api_key,
+                    model=model,
+                    cwd=cwd,
+                    session_id=session_id,
+                    tool_use_id=tid,
+                    name=name,
+                    args=args,
+                    use_sandbox=USE_SANDBOX,
+                    toolkit=toolkit,
+                    handle_subagent=_handle_subagent,
+                    handle_dev_loop=_handle_dev_loop,
+                    llm_one_shot=_llm_one_shot,
+                    handle_plan=_handle_plan,
+                    load_plan=_load_plan,
+                    sse=_sse,
+                    maybe_diff=_maybe_diff,
+                )
+
+                result: ToolResult | None = None
+                async for item in _get_handler(name)(ctx):
+                    if isinstance(item, (bytes, bytearray)):
+                        yield item
+                    elif isinstance(item, ToolResult):
+                        result = item
+                if result is None:
+                    # Defensive: a handler that forgets the terminator would
+                    # leave an orphan tool_use behind. Surface it.
+                    result = ToolResult(
+                        status="error",
+                        output=f"handler for {name!r} returned no result",
                     )
-                    status = "error" if out.startswith("[llm_one_shot error]") else "success"
-                    try:
-                        import agent_store as _st
 
-                        _st.log_action(
-                            session_id, name, args,
-                            ok=(status == "success"),
-                            error=None if status == "success" else out[:500],
-                            tool_use_id=tid,
-                        )
-                    except Exception:
-                        pass
-                    yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    tool_results_for_history.append(
-                        _M(role="tool", content=out, tool_call_id=tid, name=status)
-                    )
-                    continue
+                if result.images:
+                    pending_images.extend(result.images)
 
-                # ---- built-in tool: output_iframe ----
-                if name == "output_iframe":
-                    html = args.get("html") or ""
-                    title = args.get("title") or ""
-                    if not html:
-                        status, out = "error", "html is required"
-                    else:
-                        status, out = "success", f"Rendered iframe '{title}' ({len(html)} bytes)"
-                    try:
-                        import agent_store as _st
-
-                        _st.log_action(
-                            session_id, name, {"title": title, "html_len": len(html)},
-                            ok=(status == "success"),
-                            error=None if status == "success" else out,
-                            tool_use_id=tid,
-                        )
-                    except Exception:
-                        pass
-                    yield _sse({"type": "iframe", "id": tid, "title": title, "html": html})
-                    yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    tool_results_for_history.append(
-                        _M(role="tool", content=out, tool_call_id=tid, name=status)
-                    )
-                    continue
-
-                # ---- built-in tool: plan ----
-                if name == "plan":
-                    status, out = _handle_plan(session_id, args)
-                    try:
-                        import agent_store as _st
-
-                        _st.log_action(
-                            session_id, name, args,
-                            ok=(status == "success"),
-                            error=None if status == "success" else out[:500],
-                        )
-                    except Exception:
-                        pass
-                    yield _sse({"type": "plan", "plan": _load_plan(session_id)})
-                    yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out})
-                    tool_results_for_history.append(
-                        _M(role="tool", content=out, tool_call_id=tid, name=status)
-                    )
-                    continue
-
-                # ---- delegated: use_subagent ----
-                if name == "use_subagent":
-                    out_text = ""
-                    status = "success"
-                    async for ev_b, out in _handle_subagent(api_key, args, model, cwd, session_id, tid):
-                        if ev_b is not None:
-                            yield ev_b
-                        if out is not None:
-                            status, out_text = out
-                            yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out_text})
-                    tool_results_for_history.append(
-                        _M(role="tool", content=out_text, tool_call_id=tid, name=status)
-                    )
-                    continue
-
-                # ---- delegated: dev_loop ----
-                if name == "dev_loop":
-                    out_text = ""
-                    status = "success"
-                    async for ev_b, out in _handle_dev_loop(api_key, args, model, cwd, session_id, tid, toolkit):
-                        if ev_b is not None:
-                            yield ev_b
-                        if out is not None:
-                            status, out_text = out
-                            try:
-                                import agent_store as _st
-
-                                _st.log_action(
-                                    session_id, name, args,
-                                    ok=(status == "success"),
-                                    error=None if status == "success" else out_text[:500],
-                                    tool_use_id=tid,
-                                )
-                            except Exception:
-                                pass
-                            yield _sse({"type": "tool_result", "id": tid, "status": status, "output": out_text})
-                    tool_results_for_history.append(
-                        _M(role="tool", content=out_text, tool_call_id=tid, name=status)
-                    )
-                    continue
-
-                # ---- auto-critic before git_commit (KIRA_CRITIC_AUTO) ----
-                critic_block = None
-                if name == "git_commit" and os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True"):
-                    try:
-                        import agent_critic
-
-                        commit_repo = (args.get("path") if isinstance(args, dict) else None) or "/workspace"
-                        diff_text = ""
-                        if USE_SANDBOX:
-                            try:
-                                import sandbox_runtime as sb_rt
-
-                                await asyncio.to_thread(
-                                    sb_rt.exec_argv,
-                                    session_id,
-                                    ["git", "-c", "safe.directory=*", "add", "-A"],
-                                    commit_repo,
-                                    30,
-                                )
-                                r = await asyncio.to_thread(
-                                    sb_rt.exec_argv,
-                                    session_id,
-                                    ["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
-                                     "diff", "--cached"],
-                                    commit_repo,
-                                    30,
-                                )
-                                diff_text = r[1]
-                            except Exception:
-                                diff_text = ""
-                        else:
-                            import subprocess
-
-                            repo_cwd = commit_repo if (commit_repo and commit_repo != "/workspace") else (cwd or ".")
-                            subprocess.run(
-                                ["git", "-c", "safe.directory=*", "-C", repo_cwd, "add", "-A"],
-                                capture_output=True, text=True, timeout=30,
-                            )
-                            r = subprocess.run(
-                                ["git", "-c", "safe.directory=*", "-c", "core.pager=cat",
-                                 "-C", repo_cwd, "diff", "--cached"],
-                                capture_output=True, text=True, timeout=30,
-                            )
-                            diff_text = r.stdout
-                        verdict = await agent_critic.review_diff(
-                            api_key, diff_text,
-                            intent=(args.get("message") if isinstance(args, dict) else "") or "",
-                        )
-                        yield _sse({
-                            "type": "critic", "id": tid,
-                            "verdict": verdict.get("verdict"),
-                            "reason": verdict.get("reason", ""),
-                            "issues": verdict.get("issues", []),
-                        })
-                        if verdict.get("verdict") == "BLOCK":
-                            critic_block = verdict.get("reason") or "critic blocked the commit"
-                    except Exception as e:
-                        yield _sse({
-                            "type": "critic", "id": tid,
-                            "verdict": "OK", "reason": f"critic-error: {e}", "issues": [],
-                        })
-
-                # ---- pre_tool hooks ----
-                pre_events = []
-                deny_msg = critic_block
-                try:
-                    pre_events = agent_hooks.run_pre_tool(session_id, name, args)
-                except Exception as e:
-                    pre_events = [{
-                        "hook_id": "_error", "event": "pre_tool", "type": "log",
-                        "message": f"hook error: {e}", "tool": name,
-                    }]
-                for ev_hook in pre_events:
-                    yield _sse({**ev_hook, "type": "hook", "id": tid, "action_type": ev_hook.get("type")})
-                    if ev_hook.get("type") == "deny":
-                        deny_msg = ev_hook.get("message") or "denied by hook"
-
-                if deny_msg is not None:
-                    out = f"HOOK_DENY: {deny_msg}"
-                    status, imgs = "error", None
-                    try:
-                        import agent_store as _st
-
-                        _st.log_action(
-                            session_id, "_hook_deny",
-                            {"tool": name, "message": deny_msg, "args": args},
-                            ok=False, error=deny_msg[:500], tool_use_id=tid,
-                        )
-                    except Exception:
-                        pass
-                elif USE_SANDBOX:
-                    status, out, imgs = await asyncio.to_thread(toolkit.run_tool, name, args, cwd, session_id)
-                else:
-                    status, out, imgs = await asyncio.to_thread(toolkit.run_tool, name, args, cwd)
-
-                # ---- post_tool hooks ----
-                try:
-                    post_events = agent_hooks.run_post_tool(session_id, name, args, status, out)
-                except Exception as e:
-                    post_events = [{
-                        "hook_id": "_error", "event": "post_tool", "type": "log",
-                        "message": f"hook error: {e}", "tool": name,
-                    }]
-                for ev_hook in post_events:
-                    yield _sse({**ev_hook, "type": "hook", "id": tid, "action_type": ev_hook.get("type")})
-
-                if imgs:
-                    pending_images.extend(imgs)
-                bak = None
-                if isinstance(out, str) and "[BACKUP=" in out:
-                    bak = out.split("[BACKUP=", 1)[1].split("]", 1)[0]
-                diff_text, diff_lines = (None, 0)
-                try:
-                    if status == "success":
-                        diff_text, diff_lines = _maybe_diff(name, args, bak)
-                except Exception:
-                    pass
-                action_id = None
-                try:
-                    import agent_store as _st
-
-                    action_id = _st.log_action(
-                        session_id, name, args,
-                        ok=(status == "success"),
-                        error=None if status == "success" else (out or "")[:500],
-                        file=(args.get("path") if isinstance(args, dict) else None),
-                        backup=bak, diff=diff_text, tool_use_id=tid,
-                    )
-                except Exception:
-                    pass
-                ev_out = {
-                    "type": "tool_result", "id": tid, "status": status, "output": out,
-                    "has_image": bool(imgs),
-                }
-                if action_id is not None:
-                    ev_out["action_id"] = action_id
-                if bak:
-                    ev_out["backup"] = bak
-                if diff_text:
-                    ev_out["diff"] = diff_text
-                    ev_out["diff_lines"] = diff_lines
-                yield _sse(ev_out)
+                yield _sse({
+                    "type": "tool_result", "id": tid,
+                    "status": result.status, "output": result.output,
+                    **result.extra_sse,
+                })
                 tool_results_for_history.append(
-                    _M(role="tool", content=out or "", tool_call_id=tid, name=status)
+                    _M(role="tool", content=result.output or "", tool_call_id=tid, name=result.status)
                 )
 
             # ----- commit the round-trip into canonical history --------------
