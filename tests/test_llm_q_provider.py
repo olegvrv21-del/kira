@@ -79,8 +79,10 @@ class TestMessagesToBody:
         tools = body["conversationState"]["currentMessage"]["userInputMessage"][
             "userInputMessageContext"
         ]["tools"]
-        assert tools[0]["toolSpec"]["name"] == "grep"
-        assert tools[0]["toolSpec"]["inputSchema"]["json"] == {"type": "object"}
+        # Q wire format is `toolSpecification` (NOT `toolSpec`). The previous
+        # test version used the wrong key and let a critical regression slip.
+        assert tools[0]["toolSpecification"]["name"] == "grep"
+        assert tools[0]["toolSpecification"]["inputSchema"]["json"] == {"type": "object"}
 
     def test_multimodal_content_text_only(self):
         msg = Message(

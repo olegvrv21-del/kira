@@ -46,12 +46,18 @@ def _get_q_client():
 
 
 def _tool_specs_to_q(tools: list[ToolSpec]) -> list[dict]:
-    """Q expects `[{"toolSpec": {"name":.., "description":.., "inputSchema":{"json": <schema>}}}]`."""
+    """Q expects `[{"toolSpecification": {"name":.., "description":.., "inputSchema":{"json": <schema>}}}]`.
+
+    The key is `toolSpecification` (NOT `toolSpec`). Using the wrong key
+    makes Bedrock silently treat the tool list as empty — the model then
+    just chats instead of calling tools. This was a Phase 3c.2 regression
+    fixed in a7478e0 (parser side) and this commit (serializer side).
+    """
     out = []
     for t in tools:
         out.append(
             {
-                "toolSpec": {
+                "toolSpecification": {
                     "name": t.name,
                     "description": t.description,
                     "inputSchema": {"json": t.parameters or {"type": "object", "properties": {}}},
