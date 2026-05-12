@@ -366,6 +366,15 @@ def test_session_delete(app_client, store):
 
 
 def test_usage_missing_key(app_client, monkeypatch):
-    monkeypatch.setattr(app_mod, "KIRO_API_KEY", "")
+    # Provider-routed: status='no_key' surfaces as HTTP 400.
+    import llm
+
+    class _Stub:
+        name = "stub"
+        supported_models = []
+        async def usage(self):
+            return {"supported": True, "status": "no_key", "error": "no key"}
+
+    monkeypatch.setattr(llm, "get_provider", lambda *a, **k: _Stub())
     r = app_client.get("/usage")
     assert r.status_code == 400

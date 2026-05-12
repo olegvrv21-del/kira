@@ -271,80 +271,65 @@ def test_agent_reset(client):
     assert sid not in app_mod._AGENT_SESSIONS
 
 
-# ---------- /usage error branch (no httpx server) ----------
+# ---------- /usage error branches (provider-routed) ----------
+#
+# After Phase 3c.3 /usage delegates to llm.get_provider().usage(); these
+# tests stub the provider directly rather than mocking httpx, so they
+# survive vendor swaps.
+
+
+def _stub_usage_provider(monkeypatch, payload):
+    import llm
+
+    class _Stub:
+        name = "stub"
+        supported_models = ["stub-1"]
+        async def usage(self):
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    monkeypatch.setattr(llm, "get_provider", lambda *a, **k: _Stub())
 
 
 def test_usage_no_key(client, monkeypatch):
-    monkeypatch.setattr(app_mod, "KIRO_API_KEY", "")
+    _stub_usage_provider(monkeypatch, {"supported": True, "status": "no_key",
+                                        "error": "no Q API key available"})
     r = client.get("/usage")
     assert r.status_code == 400
 
 
 def test_usage_upstream_error(client, monkeypatch):
-    class FakeResp:
-        status_code = 500
-        text = "upstream busted"
-
-        def json(self):  # not used
-            return {}
-
-    class FakeClient:
-        def __init__(self, *a, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, *a, **kw): return FakeResp()
-
-    monkeypatch.setattr("app.httpx.AsyncClient", FakeClient)
+    _stub_usage_provider(monkeypatch, {"supported": True, "status": "http_error",
+                                        "http_status": 500, "error": "upstream busted"})
     r = client.get("/usage")
     assert r.status_code == 500
     assert r.json().get("error")
 
 
 def test_usage_exception(client, monkeypatch):
-    class FakeClient:
-        def __init__(self, *a, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, *a, **kw): raise RuntimeError("boom")
-
-    monkeypatch.setattr("app.httpx.AsyncClient", FakeClient)
+    _stub_usage_provider(monkeypatch, RuntimeError("boom"))
     r = client.get("/usage")
     assert r.status_code == 500
     assert r.json().get("error") == "RuntimeError"
 
 
 def test_usage_success(client, monkeypatch):
-    payload = {
-        "subscriptionInfo": {"subscriptionTitle": "Pro", "type": "INDIVIDUAL"},
-        "usageBreakdownList": [{
-            "currentUsageWithPrecision": 12.5,
-            "usageLimitWithPrecision": 100.0,
-            "currentOveragesWithPrecision": 0.0,
-            "overageCapWithPrecision": 50.0,
-            "overageRate": 0.04,
-            "nextDateReset": "2026-01-01",
-            "displayNamePlural": "Credits",
-        }],
-        "overageConfiguration": {"overageStatus": "DISABLED"},
-    }
-
-    class FakeResp:
-        status_code = 200
-        text = ""
-        def json(self): return payload
-
-    class FakeClient:
-        def __init__(self, *a, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, *a, **kw): return FakeResp()
-
-    monkeypatch.setattr("app.httpx.AsyncClient", FakeClient)
+    _stub_usage_provider(monkeypatch, {
+        "supported": True, "status": "ok",
+        "plan": "Pro", "plan_type": "INDIVIDUAL",
+        "used": 12.5, "limit": 100.0,
+        "overage": 0.0, "overage_cap": 50.0, "overage_rate": 0.04,
+        "overage_status": "DISABLED",
+        "reset_at": "2026-01-01", "unit": "Credits",
+    })
     r = client.get("/usage")
     assert r.status_code == 200
-    d = r.json()
-    assert d["plan"] == "Pro" and d["used"] == 12.5
-
+    body = r.json()
+    assert body["plan"] == "Pro"
+    assert body["used"] == 12.5
+    assert body["unit"] == "Credits"
+    assert body["provider"] == "stub"
 
 # ---------- stream_q early exit (no key) ----------
 

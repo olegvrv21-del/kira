@@ -534,5 +534,53 @@ class QProvider:
         except Exception as e:
             return {"name": self.name, "status": "error", "error": str(e)}
 
+    async def usage(self) -> dict[str, Any]:
+        """Query Amazon Q for current-plan usage limits.
+
+        Mirrors the Q-CLI GetUsageLimits call. Returns a normalised dict the
+        /usage HTTP route can ship as-is; on failure surfaces `status`+error
+        without leaking stack traces.
+        """
+        import httpx  # local: keep llm.base dep-free
+        try:
+            api_key = self._resolve_key()
+        except RuntimeError as e:
+            return {"supported": True, "status": "no_key", "error": str(e)}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/x-amz-json-1.0",
+            "tokentype": "API_KEY",
+            "X-Amz-Target": "AmazonCodeWhispererService.GetUsageLimits",
+            "User-Agent": "aws-sdk-rust/1.3.14 app/AmazonQ-For-CLI",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as cx:
+                r = await cx.post("https://q.us-east-1.amazonaws.com/",
+                                  headers=headers, content="{}")
+            if r.status_code >= 400:
+                return {"supported": True, "status": "http_error",
+                        "http_status": r.status_code, "error": r.text[:400]}
+            d = r.json()
+        except Exception as e:
+            return {"supported": True, "status": "error",
+                    "error": type(e).__name__}
+        sub = d.get("subscriptionInfo", {}) or {}
+        ub_list = d.get("usageBreakdownList", []) or []
+        ub = ub_list[0] if ub_list else {}
+        return {
+            "supported": True,
+            "status": "ok",
+            "plan": sub.get("subscriptionTitle", ""),
+            "plan_type": sub.get("type", ""),
+            "used": ub.get("currentUsageWithPrecision", 0.0),
+            "limit": ub.get("usageLimitWithPrecision", 0.0),
+            "overage": ub.get("currentOveragesWithPrecision", 0.0),
+            "overage_cap": ub.get("overageCapWithPrecision", 0.0),
+            "overage_rate": ub.get("overageRate", 0.0),
+            "overage_status": (d.get("overageConfiguration") or {}).get("overageStatus", ""),
+            "reset_at": ub.get("nextDateReset") or d.get("nextDateReset"),
+            "unit": ub.get("displayNamePlural") or ub.get("displayName") or "Credits",
+        }
+
 
 _proto_check: LLMProvider = QProvider()  # noqa: F841

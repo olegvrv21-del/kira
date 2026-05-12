@@ -133,6 +133,15 @@ class LLMProvider(Protocol):
         """Return a small dict surfaced in /agent/health."""
         ...
 
+    async def usage(self) -> dict[str, Any]:
+        """Return account-level usage/limits info (provider-specific).
+
+        Adapters that don't expose a usage endpoint should return
+        {"supported": False} rather than raise — the /usage HTTP route
+        passes the dict through to the client unchanged.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Helpers used by adapters & tests

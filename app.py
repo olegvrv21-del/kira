@@ -142,6 +142,7 @@ app = FastAPI(lifespan=_lifespan)
 
 # Optional auth + per-IP rate limiting (no-op unless env flags set).
 import agent_auth
+import llm
 
 _auth_status = agent_auth.install(app)
 
@@ -1089,37 +1090,31 @@ async def agent_reset(req: AgentRequest, request: Request):
 
 @app.get("/usage")
 async def usage():
-    if not KIRO_API_KEY:
-        return JSONResponse({"error": "KIRO_API_KEY not set"}, status_code=400)
-    headers = {
-        "Authorization": f"Bearer {key_pool.current() or KIRO_API_KEY}",
-        "Content-Type": "application/x-amz-json-1.0",
-        "tokentype": "API_KEY",
-        "X-Amz-Target": "AmazonCodeWhispererService.GetUsageLimits",
-        "User-Agent": "aws-sdk-rust/1.3.14 app/AmazonQ-For-CLI",
-    }
+    """Provider-routed usage endpoint.
+
+    Delegates to the active LLM provider's usage() so /usage works for any
+    backend that exposes account-level limits. Q returns the live usage
+    breakdown; providers without a usage API surface {"supported": False}.
+    """
     try:
-        async with httpx.AsyncClient(timeout=15) as cx:
-            r = await cx.post("https://q.us-east-1.amazonaws.com/", headers=headers, content="{}")
-        if r.status_code >= 400:
-            return JSONResponse({"error": r.text[:400]}, status_code=r.status_code)
-        d = r.json()
-        sub = d.get("subscriptionInfo", {}) or {}
-        ub_list = d.get("usageBreakdownList", []) or []
-        ub = ub_list[0] if ub_list else {}
-        return {
-            "plan": sub.get("subscriptionTitle", ""),
-            "plan_type": sub.get("type", ""),
-            "used": ub.get("currentUsageWithPrecision", 0.0),
-            "limit": ub.get("usageLimitWithPrecision", 0.0),
-            "overage": ub.get("currentOveragesWithPrecision", 0.0),
-            "overage_cap": ub.get("overageCapWithPrecision", 0.0),
-            "overage_rate": ub.get("overageRate", 0.0),
-            "overage_status": (d.get("overageConfiguration") or {}).get("overageStatus", ""),
-            "reset_at": ub.get("nextDateReset") or d.get("nextDateReset"),
-            "unit": ub.get("displayNamePlural") or ub.get("displayName") or "Credits",
-        }
+        provider = llm.get_provider()
     except Exception as e:
-        # Don't leak internals to clients (CodeQL py/stack-trace-exposure).
-        print(f"[usage] failed: {type(e).__name__}: {e}")
+        return JSONResponse({"error": f"provider unavailable: {type(e).__name__}"},
+                            status_code=500)
+    try:
+        data = await provider.usage()
+    except Exception as e:
+        print(f"[usage] {provider.name} failed: {type(e).__name__}: {e}")
         return JSONResponse({"error": type(e).__name__}, status_code=500)
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "provider returned non-dict"}, status_code=500)
+    data.setdefault("provider", provider.name)
+    # Preserve the prior contract for clients: when Q is the provider and the
+    # call succeeded, top-level fields (plan, used, limit, ...) sit alongside
+    # `supported` / `status`. Unsupported providers get HTTP 200 with the
+    # `supported: False` flag so the UI can render a friendly note.
+    if data.get("status") == "no_key":
+        return JSONResponse(data, status_code=400)
+    if data.get("status") == "http_error":
+        return JSONResponse(data, status_code=data.get("http_status", 502))
+    return data

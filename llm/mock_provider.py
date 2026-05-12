@@ -102,6 +102,10 @@ class MockProvider:
 
         yield StreamEvent(type="done")
 
+    async def usage(self) -> dict[str, Any]:
+        """Mock provider doesn't track usage — surface unsupported."""
+        return {"supported": False, "provider": self.name}
+
     async def health(self) -> dict[str, Any]:
         return {"name": self.name, "status": "ok", "models": self.supported_models}
 

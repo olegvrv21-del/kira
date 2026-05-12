@@ -151,6 +151,9 @@ def test_protocol_runtime_check():
         async def health(self):
             return {}
 
+        async def usage(self):
+            return {"supported": False}
+
     assert isinstance(_Stub(), LLMProvider)
 
 
