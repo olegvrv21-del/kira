@@ -71,6 +71,12 @@ def _default_registry() -> None:
     if "mock" not in _REGISTRY:
         _REGISTRY["mock"] = lambda: MockProvider()
 
+    if "openrouter" not in _REGISTRY:
+        def _openrouter():
+            from .openrouter_provider import OpenRouterProvider
+            return OpenRouterProvider()
+        _REGISTRY["openrouter"] = _openrouter
+
     # Stubs — documented extension points. They raise NotImplementedError
     # until a client opts in and provides credentials/SDK config.
     if "anthropic" not in _REGISTRY:
