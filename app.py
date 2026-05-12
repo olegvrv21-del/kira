@@ -113,7 +113,30 @@ _Q_MODELS = [
 MODELS = (_Q_MODELS if KIRO_API_KEY else []) + _KR_MODELS
 MODEL_IDS = {m["id"] for m in MODELS}
 
-app = FastAPI()
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):  # noqa: ARG001
+    try:
+        ttl = int(os.environ.get("KIRA_SESSION_TTL_DAYS", "30"))
+        gone = agent_store.cleanup_old_sessions(ttl)
+        if gone:
+            ws_root = os.path.join(os.path.dirname(__file__), "workspaces")
+            for sid in gone:
+                p = os.path.join(ws_root, sid)
+                if os.path.isdir(p):
+                    try:
+                        _shutil.rmtree(p)
+                    except Exception:
+                        pass
+            print(f"[agent_store] cleaned {len(gone)} old sessions")
+    except Exception as e:
+        print(f"[agent_store] cleanup failed: {e}")
+    yield
+
+
+app = FastAPI(lifespan=_lifespan)
 
 # Optional auth + per-IP rate limiting (no-op unless env flags set).
 import agent_auth
@@ -567,24 +590,6 @@ import shutil as _shutil
 agent_store.init()
 
 KIRA_SESSION_TTL_DAYS = int(os.environ.get("KIRA_SESSION_TTL_DAYS", "30"))
-
-
-@app.on_event("startup")
-async def _cleanup_on_start():
-    try:
-        gone = agent_store.cleanup_old_sessions(KIRA_SESSION_TTL_DAYS)
-        if gone:
-            ws_root = os.path.join(os.path.dirname(__file__), "workspaces")
-            for sid in gone:
-                p = os.path.join(ws_root, sid)
-                if os.path.isdir(p):
-                    try:
-                        _shutil.rmtree(p)
-                    except Exception:
-                        pass
-            print(f"[agent_store] cleaned {len(gone)} old sessions")
-    except Exception as e:
-        print(f"[agent_store] cleanup failed: {e}")
 
 
 # Cost limits (override via env / systemd unit).

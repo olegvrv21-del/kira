@@ -111,13 +111,13 @@ def init() -> None:
 def _today_key() -> str:
     import datetime
 
-    return datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
 def _month_key() -> str:
     import datetime
 
-    return datetime.datetime.utcnow().strftime("%Y-%m")
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
 
 
 def get_month_credits() -> float:
