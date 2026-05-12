@@ -752,6 +752,15 @@ async def run_agent(
     conv_id = str(uuid.uuid4())
     cont_id = str(uuid.uuid4())
 
+    # Phase 3c.1: route the main loop's HTTP through the llm/ provider. The
+    # main loop still manages `history` as Q dicts (for DB back-compat with
+    # existing sessions and orphan-tool_use handling); the provider exposes
+    # `stream_raw_body` as an escape hatch for that case. Full canonical-
+    # message refactor of the main loop is phase 3c.2 (separate session).
+    from llm.q_provider import QProvider
+
+    _main_provider = QProvider(api_key=key_pool.current() or api_key)
+
     if history is None:
         history = []
     if not history:
@@ -822,7 +831,7 @@ async def run_agent(
 
             cancelled_mid_stream = False
             try:
-                async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, cancel_event=cancel_ev):
+                async for et, payload in _main_provider.stream_raw_body(body, cancel=cancel_ev):
                     if et == "_cancelled":
                         cancelled_mid_stream = True
                         break

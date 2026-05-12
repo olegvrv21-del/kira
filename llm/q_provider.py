@@ -296,6 +296,24 @@ class QProvider:
                     )
         yield StreamEvent(type="done")
 
+    async def stream_raw_body(
+        self,
+        body: dict,
+        *,
+        timeout: float = 300.0,
+        cancel: asyncio.Event | None = None,
+    ) -> AsyncIterator[tuple]:
+        """Escape hatch: stream a pre-built Q body and yield raw (event_type, payload).
+
+        Used by `run_agent` which manages its history as Q dicts directly (for
+        DB back-compat and orphan-tool_use handling). Other adapters can either
+        translate the Q body to their wire format or raise NotImplementedError.
+        """
+        api_key = self._resolve_key()
+        qc = _get_q_client()
+        async for et, payload in qc.stream_q(api_key, body, timeout=timeout, cancel_event=cancel):
+            yield et, payload
+
     async def health(self) -> dict[str, Any]:
         try:
             from agent_keys import key_pool
