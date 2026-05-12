@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/kira-hero.jpg" alt="Кира" width="420" />
+  <img src="assets/kira-social.jpg" alt="Кира" width="640" />
 </p>
 
 <h1 align="center">🌸 Кира</h1>
