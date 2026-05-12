@@ -76,6 +76,25 @@ def test_static_sessions_js_served(app_client):
     assert "refreshAgentBudget" in body
 
 
+def test_static_composer_js_served(app_client):
+    """Phase 4c — message composition + chat-side rendering."""
+    r = app_client.get("/static/composer.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "createComposer" in body
+    assert "buildUserContent" in body
+    assert "editUserMessage" in body
+
+
+def test_static_exporters_js_served(app_client):
+    """Phase 4c — markdown exporters."""
+    r = app_client.get("/static/exporters.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "createExporters" in body
+    assert "exportAgentToMd" in body
+
+
 def test_tool_specs_include_new_tools():
     import json
     from pathlib import Path

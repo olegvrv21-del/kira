@@ -19,6 +19,8 @@ import { initDashboard } from './dashboard.js';
 import { createAgentRunner } from './agent_sse.js';
 import { createToolCards } from './tool_cards.js';
 import { createAgentSessions } from './sessions.js';
+import { createComposer } from './composer.js';
+import { createExporters } from './exporters.js';
 
 installFetchInterceptor();
 
@@ -76,7 +78,6 @@ installFetchInterceptor();
     const LS_CHATS = 'kira_chats_v1';
     const LS_DRAWER = 'kira_drawer_open';
     let history = [];
-    let pendingFiles = [];
     let streaming = false;
     let currentModel = null;
     let allModels = [];
@@ -372,29 +373,27 @@ installFetchInterceptor();
     document.getElementById('u-refresh').addEventListener('click', loadUsage);
 
     /* files */
-    function renderAttachments() {
-      attachmentsEl.innerHTML = '';
-      pendingFiles.forEach((f, i) => {
-        const chip = document.createElement('div'); chip.className = 'chip';
-        const label = document.createElement('span'); label.textContent = `${f.name} · ${fmtSize(f.size)}`;
-        const x = document.createElement('button'); x.type='button'; x.textContent='×';
-        x.addEventListener('click', () => { pendingFiles.splice(i,1); renderAttachments(); });
-        chip.appendChild(label); chip.appendChild(x); attachmentsEl.appendChild(chip);
-      });
-    }
-    async function ingestFiles(list) {
-      for (const f of list) {
-        const isImage = f.type.startsWith('image/');
-        const isText = f.type.startsWith('text/') || /\.(md|txt|json|ya?ml|csv|log|py|js|ts|tsx|jsx|html|css|sh|conf|toml|ini|xml|sql|go|rs|c|cpp|h|hpp|java|rb|php)$/i.test(f.name);
-        if (f.size > 5*1024*1024) { alert(f.name + t('too_big')); continue; }
-        const e = { name: f.name, type: f.type, size: f.size };
-        if (isImage) e.dataUrl = await fileToDataUrl(f);
-        else if (isText) e.text = await f.text();
-        else { alert(f.name + t('only_text_image')); continue; }
-        pendingFiles.push(e);
-      }
-      renderAttachments();
-    }
+    // Composer (phase 4c): renderAttachments / ingestFiles / buildUserContent
+    // / attachCopyAction / editUserMessage / addMsg live in composer.js.
+    // pendingFiles is owned by the module; we read it via getPendingFiles()
+    // and reset it via clearPending().
+    const _composer = createComposer({
+      t: (k) => t(k),
+      getLang: () => lang,
+      utils: { fmtSize, fileToDataUrl, copyToClipboard },
+      renderMarkdown,
+      dom: { attachmentsEl, messagesEl, input },
+      state: {
+        getStreaming: () => streaming,
+        getAgentMode: () => agentMode,
+        getHistory:   () => history,
+        setHistory:   (v) => { history = v; },
+      },
+      fns: { persistActive, renderChatList },
+    });
+    const { renderAttachments, ingestFiles, buildUserContent,
+            attachCopyAction, editUserMessage, addMsg,
+            getPendingFiles, clearPending } = _composer;
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', async (e) => { await ingestFiles(e.target.files); fileInput.value = ''; });
     input.addEventListener('paste', async (e) => {
@@ -403,108 +402,6 @@ installFetchInterceptor();
       if (files.length) { e.preventDefault(); await ingestFiles(files); }
     });
 
-    /* compose */
-    function buildUserContent(text, files) {
-      const hasImages = files.some(f => f.dataUrl);
-      if (hasImages) {
-        const parts = []; let combined = text || '';
-        for (const f of files) if (f.text) combined += `\n\n[file: ${f.name}]\n${f.text}`;
-        if (combined.trim()) parts.push({ type: 'text', text: combined });
-        for (const f of files) if (f.dataUrl) parts.push({ type: 'image_url', image_url: { url: f.dataUrl } });
-        return parts;
-      }
-      let combined = text || '';
-      for (const f of files) if (f.text != null) combined += `\n\n[file: ${f.name}]\n${f.text}`;
-      return combined;
-    }
-    function attachCopyAction(wrap, getText, opts = {}) {
-      const actions = document.createElement('div'); actions.className = 'msg-actions';
-      const copyBtn = document.createElement('button'); copyBtn.type = 'button';
-      copyBtn.textContent = lang === 'ru' ? 'Копировать' : 'Copy';
-      copyBtn.title = copyBtn.textContent;
-      copyBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        try {
-          await copyToClipboard(getText());
-          copyBtn.textContent = lang === 'ru' ? 'Готово' : 'Copied';
-          copyBtn.classList.add('copied');
-          setTimeout(() => {
-            copyBtn.textContent = lang === 'ru' ? 'Копировать' : 'Copy';
-            copyBtn.classList.remove('copied');
-          }, 1400);
-        } catch {}
-      });
-      actions.appendChild(copyBtn);
-      if (opts.editable) {
-        const editBtn = document.createElement('button'); editBtn.type = 'button';
-        editBtn.textContent = lang === 'ru' ? 'Редактировать' : 'Edit';
-        editBtn.title = editBtn.textContent;
-        editBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          opts.onEdit && opts.onEdit();
-        });
-        actions.appendChild(editBtn);
-      }
-      wrap.appendChild(actions);
-    }
-
-    function editUserMessage(msgDiv) {
-      if (streaming) return;
-      // count which user msg this is (0-based among user msgs in DOM)
-      const userMsgs = [...messagesEl.querySelectorAll('.msg.user')];
-      const idx = userMsgs.indexOf(msgDiv);
-      if (idx < 0) return;
-      // find same-index user msg in history
-      let hi = -1, count = -1;
-      for (let i = 0; i < history.length; i++) {
-        if (history[i].role === 'user') { count++; if (count === idx) { hi = i; break; } }
-      }
-      if (hi < 0) return;
-      const m = history[hi];
-      const raw = typeof m.content === 'string'
-        ? m.content
-        : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
-      // truncate history from this user msg onward; remove DOM from this msg onward
-      history = history.slice(0, hi);
-      let n = msgDiv;
-      while (n) { const next = n.nextSibling; n.remove(); n = next; }
-      persistActive(); renderChatList();
-      input.value = raw;
-      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px';
-      input.focus();
-    }
-
-    function addMsg(role, displayText, files, opts = {}) {
-      const empty = messagesEl.querySelector('.empty'); if (empty) empty.remove();
-      const div = document.createElement('div');
-      div.className = 'msg ' + role + (opts.error ? ' error' : '');
-      if (files && files.length) {
-        for (const f of files) {
-          const ch = document.createElement('span'); ch.className = 'chip';
-          ch.style.marginRight = '6px'; ch.style.marginBottom = '6px';
-          ch.textContent = f.name; div.appendChild(ch);
-        }
-        div.appendChild(document.createElement('br'));
-      }
-      const txt = document.createElement('span');
-      txt.dataset.raw = displayText || '';
-      if (role === 'assistant' && displayText && !opts.error) {
-        renderMarkdown(txt, displayText);
-      } else {
-        txt.textContent = displayText;
-      }
-      div.appendChild(txt);
-      if (role === 'user' || role === 'assistant') {
-        const editable = role === 'user' && !agentMode && !opts.noEdit;
-        attachCopyAction(div, () => txt.dataset.raw || txt.textContent || '', {
-          editable,
-          onEdit: editable ? () => editUserMessage(div) : null,
-        });
-      }
-      messagesEl.appendChild(div);
-      messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-      return { wrap: div, txt };
-    }
 
     input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 240) + 'px'; });
     input.addEventListener('keydown', (e) => {
@@ -594,22 +491,22 @@ installFetchInterceptor();
         return;
       }
       const text = input.value.trim();
-      if (!text && pendingFiles.length === 0) return;
+      if (!text && getPendingFiles().length === 0) return;
       if (text.startsWith('/') && handleSlashCommand(text)) return;
       if (agentMode) {
-        const imgs = pendingFiles.filter(f => f.dataUrl).map(f => {
+        const imgs = getPendingFiles().filter(f => f.dataUrl).map(f => {
           const m = f.dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
           return m ? { format: m[1], data_base64: m[2] } : null;
         }).filter(Boolean);
-        const filesSnapshot = pendingFiles.slice();
-        pendingFiles = []; renderAttachments();
+        const filesSnapshot = getPendingFiles().slice();
+        clearPending();
         // Text files: append their content to the prompt for the agent.
         let agentText = text;
         for (const f of filesSnapshot) if (f.text != null) agentText += `\n\n[file: ${f.name}]\n${f.text}`;
         return sendAgent(agentText, imgs);
       }
       streaming = true; sendBtn.disabled = true;
-      const filesSnapshot = pendingFiles.slice();
+      const filesSnapshot = getPendingFiles().slice();
       const apiContent = buildUserContent(text, filesSnapshot);
       history.push({ role: 'user', content: apiContent });
       // First user message in a chat pins the model for that chat.
@@ -621,7 +518,7 @@ installFetchInterceptor();
       addMsg('user', display, filesSnapshot);
       persistActive();
       input.value = ''; input.style.height = 'auto';
-      pendingFiles = []; renderAttachments();
+      clearPending();
       const asst = addMsg('assistant', '', null);
       asst.wrap.classList.add('typing');
       let acc = '';
@@ -674,54 +571,16 @@ installFetchInterceptor();
     });
 
     /* export current session to .md */
-    function exportChatToMd() {
-      const c = chats.find(x => x.id === activeChatId);
-      if (!c || !c.history || !c.history.length) { alert(t('export_empty')); return; }
-      const lines = [`# ${c.title || 'Chat'}`, '', `_Model: ${c.model || currentModel || '?'}_`, ''];
-      for (const m of c.history) {
-        const txt = typeof m.content === 'string'
-          ? m.content
-          : (Array.isArray(m.content) ? (m.content.find(p => p.type === 'text')?.text || '') : '');
-        lines.push(m.role === 'user' ? '## 👤 User' : '## 🤖 Assistant', '', txt, '');
-      }
-      const safeTitle = safeFilename(c.title || 'chat');
-      downloadFile(`${safeTitle}.md`, lines.join('\n'));
-    }
-    async function exportAgentToMd() {
-      if (!agentSessionId) { alert(t('export_empty')); return; }
-      try {
-        const r = await fetch('/agent/sessions/' + agentSessionId);
-        if (!r.ok) { alert(t('export_empty')); return; }
-        const d = await r.json();
-        const tr = d.transcript || [];
-        if (!tr.length) { alert(t('export_empty')); return; }
-        const lines = [`# Agent session ${d.sid}`, '', `_Model: ${d.model || '?'}_`, ''];
-        for (const m of tr) {
-          if (m.role === 'user') {
-            lines.push('## 👤 User', '', m.text || '', '');
-          } else if (m.role === 'assistant') {
-            lines.push('## 🤖 Assistant', '', m.text || '', '');
-          } else if (m.role === 'tool') {
-            lines.push(`### 🔧 Tool: \`${m.name}\` [${m.status || '?'}]`, '');
-            try {
-              lines.push('```json', JSON.stringify(m.input || {}, null, 2), '```', '');
-            } catch {}
-            if (m.output) {
-              lines.push('```', String(m.output).slice(0, 4000), '```', '');
-            }
-            if (Array.isArray(m.subagents) && m.subagents.length) {
-              for (const sa of m.subagents) {
-                lines.push(`- **Subagent #${(sa.index || 0) + 1}** [${sa.status}] ${sa.query || ''}`);
-                if (sa.preview) lines.push(`  > ${(sa.preview || '').replace(/\n/g, ' ')}`);
-              }
-              lines.push('');
-            }
-          }
-        }
-        const safe = ((d.sid) || 'agent').toString().slice(0, 40);
-        downloadFile(`agent_${safe}.md`, lines.join('\n'));
-      } catch (e) { alert('Export failed: ' + e.message); }
-    }
+    // Exporters (phase 4c) — live in static/exporters.js.
+    const _exporters = createExporters({
+      t: (k) => t(k),
+      downloadFile, safeFilename,
+      getChats:            () => chats,
+      getActiveChatId:     () => activeChatId,
+      getCurrentModel:     () => currentModel,
+      getAgentSessionId:   () => agentSessionId,
+    });
+    const { exportChatToMd, exportAgentToMd } = _exporters;
     document.getElementById('export-btn').addEventListener('click', () => {
       if (agentMode) exportAgentToMd();
       else exportChatToMd();
