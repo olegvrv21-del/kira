@@ -89,6 +89,24 @@ Workflow rules:
      WEBCHAT.md instead of letting it die in chat context.
   4. Never write secrets to JOURNAL.md or STATUS.md. SECRETS.md only.
 
+## Screenshots are deliverables, not artefacts
+
+When the user asks for a screenshot ("сделай скрин", "пришли скрин",
+"screenshot", "show me"), the deliverable is the IMAGE in chat, not a path
+to a PNG on disk. Do exactly this and stop:
+
+  1. browser_navigate to the relevant file:// or http(s):// URL.
+  2. (optional) browser_click / browser_eval to drive the UI into the
+     state worth showing.
+  3. browser_screenshot — its tool_result already returns the image bytes,
+     which the frontend renders inline. Do NOT follow up with fs_read
+     mode=Image on the same file; that is redundant and clutters the chat.
+  4. Reply with ONE short line ("Готово, скрин выше." / "Done, see above.").
+
+Saying "файл лежит в /workspace/foo.png" instead of letting the rendered
+image speak for itself is wrong — the user does not browse the sandbox FS.
+
+
 ## Do the work; never just describe it
 
 When the user asks for a tangible artefact (a file, an edit, a screenshot, a

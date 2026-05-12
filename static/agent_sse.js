@@ -246,13 +246,28 @@ export function createAgentRunner(opts) {
                 const m = (j.output || '').match(/saved to (\S+)/);
                 if (m) {
                   const rel = m[1].replace(/^\/workspace\//, '');
+                  const src = `/agent/file/${state.agentSessionId}/${rel}?t=${Date.now()}`;
                   const img = document.createElement('img');
-                  img.src = `/agent/file/${state.agentSessionId}/${rel}?t=${Date.now()}`;
+                  img.src = src;
                   img.style.maxWidth = '100%';
                   img.style.borderRadius = '8px';
                   img.style.marginTop = '8px';
                   img.style.display = 'block';
                   card.querySelector('.out-wrap').appendChild(img);
+                  // Auto-expand the tool card so the screenshot is visible
+                  // without the user having to tap it open.
+                  card.classList.add('open');
+                  // Also drop a standalone preview bubble right after the
+                  // card so the screenshot is unmissable in the message flow.
+                  const preview = document.createElement('div');
+                  preview.className = 'agent-screenshot-preview';
+                  preview.style.cssText = 'margin:6px 0;max-width:480px';
+                  const img2 = document.createElement('img');
+                  img2.src = src;
+                  img2.alt = 'screenshot';
+                  img2.style.cssText = 'width:100%;border-radius:10px;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.35)';
+                  preview.appendChild(img2);
+                  card.insertAdjacentElement('afterend', preview);
                 }
               }
               if (j.diff) {
