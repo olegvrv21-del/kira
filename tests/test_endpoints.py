@@ -57,6 +57,15 @@ def test_static_agent_sse_js_served(app_client):
     assert "type === 'iframe'" in body  # iframe handler shipped
 
 
+def test_static_tool_cards_js_served(app_client):
+    """Phase 4 extracted tool-card builders into their own module."""
+    r = app_client.get("/static/tool_cards.js")
+    assert r.status_code == 200
+    body = r.text
+    assert "createToolCards" in body
+    assert "diff-rb" in body  # rollback button class kept
+
+
 def test_tool_specs_include_new_tools():
     import json
     from pathlib import Path
