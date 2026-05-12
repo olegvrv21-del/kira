@@ -6,6 +6,8 @@ import time
 import uuid
 from typing import Any
 
+_PROCESS_START = time.time()
+
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -261,6 +263,122 @@ async def metrics_sid(sid: str, window: float | None = None):
 @app.get("/agent/auth_status")
 async def auth_status():
     return {"install": _auth_status, "runtime": agent_auth.snapshot()}
+
+
+@app.get("/agent/health")
+async def agent_health():
+    """Aggregate health snapshot.
+
+    Combines: process uptime, in-flight session count, key-pool status,
+    today/month credits + simple linear forecast, last 24h tool error
+    rate, and a single 'status' field (ok|degraded|critical) for
+    Telegram/monitoring alerts.
+    """
+    import datetime as _dt
+
+    now = time.time()
+    uptime = now - _PROCESS_START
+
+    # in-flight = count of registered cancel events
+    try:
+        in_flight = len(agent_runtime._CANCEL_EVENTS)
+        in_flight_sids = list(agent_runtime._CANCEL_EVENTS.keys())[:20]
+    except Exception:
+        in_flight = 0
+        in_flight_sids = []
+
+    # keys
+    try:
+        keys = key_pool.status()
+    except Exception as e:
+        keys = {"error": type(e).__name__ + ": " + str(e)[:200]}
+
+    # credits + forecast
+    try:
+        day_credits = float(agent_store.get_today_credits())
+        month_credits = float(agent_store.get_month_credits())
+    except Exception:
+        day_credits = 0.0
+        month_credits = 0.0
+    utc_now = _dt.datetime.now(_dt.timezone.utc)
+    seconds_into_day = utc_now.hour * 3600 + utc_now.minute * 60 + utc_now.second
+    seconds_in_day = 86400
+    fraction_done = max(seconds_into_day, 1) / seconds_in_day
+    day_forecast = day_credits / fraction_done if fraction_done > 0 else day_credits
+    # month: days passed / days in month
+    if utc_now.month == 12:
+        next_month = utc_now.replace(year=utc_now.year + 1, month=1, day=1)
+    else:
+        next_month = utc_now.replace(month=utc_now.month + 1, day=1)
+    days_in_month = (next_month - utc_now.replace(day=1)).days
+    days_passed = max((utc_now - utc_now.replace(day=1)).total_seconds() / 86400, 0.01)
+    month_forecast = (month_credits / days_passed) * days_in_month
+
+    # 24h tool error rate
+    try:
+        m24 = agent_store.compute_metrics(sid=None, window_seconds=86400)
+        success_rate = m24.get("success_rate")
+        total_24h = int(m24.get("total") or 0)
+        fail_24h = int(m24.get("fail") or 0)
+        hook_denies_24h = int(m24.get("hook_denies") or 0)
+        top_errors = m24.get("top_errors", [])
+    except Exception:
+        success_rate, total_24h, fail_24h, hook_denies_24h, top_errors = None, 0, 0, 0, []
+
+    # status classification
+    status = "ok"
+    reasons: list[str] = []
+    pool_size = int(keys.get("pool_size") or 1) if isinstance(keys, dict) else 1
+    banned = 0
+    for k in (keys.get("keys") if isinstance(keys, dict) else []) or []:
+        if k.get("banned"):
+            banned += 1
+    if banned >= pool_size:
+        status = "critical"
+        reasons.append("all api keys banned")
+    elif banned > 0:
+        status = "degraded"
+        reasons.append(f"{banned}/{pool_size} api keys banned")
+    if KIRA_MONTHLY_LIMIT > 0 and month_forecast > KIRA_MONTHLY_LIMIT:
+        if status == "ok":
+            status = "degraded"
+        reasons.append(f"month forecast {month_forecast:.1f} exceeds limit {KIRA_MONTHLY_LIMIT:.0f}")
+    if KIRA_MONTHLY_LIMIT > 0 and month_credits >= KIRA_MONTHLY_LIMIT * 0.95:
+        status = "critical"
+        reasons.append("monthly budget >=95% used")
+    if success_rate is not None and total_24h >= 20 and success_rate < 0.5:
+        if status == "ok":
+            status = "degraded"
+        reasons.append(f"24h tool success_rate {success_rate:.0%} below 50%")
+
+    return {
+        "ok": True,
+        "status": status,
+        "reasons": reasons,
+        "uptime_seconds": round(uptime, 1),
+        "started_at": _dt.datetime.fromtimestamp(_PROCESS_START, tz=_dt.timezone.utc).isoformat(),
+        "in_flight": in_flight,
+        "in_flight_sids": in_flight_sids,
+        "keys": keys,
+        "credits": {
+            "day": round(day_credits, 4),
+            "day_limit": KIRA_DAILY_LIMIT,
+            "day_forecast": round(day_forecast, 2),
+            "day_fraction_done": round(fraction_done, 3),
+            "month": round(month_credits, 4),
+            "month_limit": KIRA_MONTHLY_LIMIT,
+            "month_forecast": round(month_forecast, 2),
+            "month_days_passed": round(days_passed, 2),
+            "month_days_total": days_in_month,
+        },
+        "tools_24h": {
+            "total": total_24h,
+            "fail": fail_24h,
+            "success_rate": (round(success_rate, 4) if success_rate is not None else None),
+            "hook_denies": hook_denies_24h,
+            "top_errors": top_errors,
+        },
+    }
 
 
 @app.get("/agent/coverage")
