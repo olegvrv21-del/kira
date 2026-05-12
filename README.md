@@ -81,7 +81,32 @@ skills/               # markdown playbooks
 tests/                # 52 pytest + 12-check smoke script
 ```
 
-## Running
+## Quick start
+
+### 🐳 Docker (рекомендуется)
+
+```bash
+git clone https://github.com/olegvrv21-del/kira.git && cd kira
+./install.sh docker          # builds image, generates auth token, starts
+```
+
+→ Открой http://localhost:3000/. Токен в `.env` (`KIRA_AUTH_TOKEN`).
+
+### 🐍 Venv (без Docker)
+
+```bash
+./install.sh venv
+source .env && .venv/bin/uvicorn app:app --host 0.0.0.0 --port 3000
+```
+
+### 🚀 Systemd (продакшен)
+
+```bash
+./install.sh systemd         # ставит venv + регистрирует kira.service
+systemctl status kira
+```
+
+### Manual
 
 ```bash
 python -m venv .venv
@@ -89,11 +114,13 @@ python -m venv .venv
 KIRO_API_KEY=ksk_xxxx .venv/bin/uvicorn app:app --host 0.0.0.0 --port 3000
 ```
 
-For sandbox mode also set `KIRA_SANDBOX=1` and build the image:
+For full sandbox isolation per session also set `KIRA_SANDBOX=1` and build the sandbox image:
 
 ```bash
 docker build -t kira-sandbox:latest sandbox/
 ```
+
+См. `.env.example` — все переменные с описанием.
 
 ## Tests
 

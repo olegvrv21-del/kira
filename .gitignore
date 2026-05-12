@@ -27,6 +27,7 @@ agent_sessions.db-wal
 .restart_token
 .env
 .env.*
+!.env.example
 secrets/
 
 # Editor/OS

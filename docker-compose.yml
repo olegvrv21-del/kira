@@ -1,0 +1,36 @@
+# Kira — self-modifying AI agent
+# Quick start:
+#   1. cp .env.example .env  &&  edit .env (set KIRO_API_KEY + KIRA_AUTH_TOKEN)
+#   2. docker compose up -d
+#   3. open http://localhost:3000/  (Bearer token from .env)
+
+services:
+  kira:
+    build: .
+    image: kira:latest
+    container_name: kira
+    restart: unless-stopped
+    ports:
+      - "${KIRA_PORT:-3000}:3000"
+    env_file: .env
+    environment:
+      # mounted paths
+      KIRA_NOTEBOOK_DIR: /app/notebook
+      # sandbox disabled by default in compose mode
+      # (set to 1 if you wire Docker-in-Docker — advanced)
+      KIRA_SANDBOX: "0"
+    volumes:
+      # persistent state
+      - kira-data:/app/data
+      - ./notebook:/app/notebook
+      # optional: live-edit source from host (uncomment for dev)
+      # - .:/app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  kira-data:
