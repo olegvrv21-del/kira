@@ -204,19 +204,27 @@ def test_glob_no_matches(tmp_path):
 
 # ---------- grep ----------
 
+_RG_MISSING = pytest.mark.skipif(
+    not __import__("shutil").which("rg"),
+    reason="ripgrep (rg) not installed in CI environment",
+)
 
+
+@_RG_MISSING
 def test_grep_success(tmp_path):
     (tmp_path / "a.txt").write_text("hello world\nfoo bar\n")
     out = at.grep_tool({"pattern": "hello", "path": str(tmp_path)}, cwd=str(tmp_path))
     assert "hello world" in out
 
 
+@_RG_MISSING
 def test_grep_no_match(tmp_path):
     (tmp_path / "a.txt").write_text("hi")
     out = at.grep_tool({"pattern": "zzzzzz", "path": str(tmp_path)}, cwd=str(tmp_path))
     assert out == "(no matches)"
 
 
+@_RG_MISSING
 def test_grep_files_with_matches(tmp_path):
     (tmp_path / "a.txt").write_text("target")
     (tmp_path / "b.txt").write_text("target")
@@ -227,6 +235,7 @@ def test_grep_files_with_matches(tmp_path):
     assert "a.txt" in out and "b.txt" in out
 
 
+@_RG_MISSING
 def test_grep_count_mode(tmp_path):
     (tmp_path / "a.txt").write_text("x\nx\ny")
     out = at.grep_tool(
@@ -235,6 +244,7 @@ def test_grep_count_mode(tmp_path):
     assert ":2" in out  # ripgrep prints '<path>:<count>'
 
 
+@_RG_MISSING
 def test_grep_case_sensitive(tmp_path):
     (tmp_path / "a.txt").write_text("HELLO\nhello\n")
     out = at.grep_tool(
@@ -246,6 +256,7 @@ def test_grep_case_sensitive(tmp_path):
     assert not body_lines
 
 
+@_RG_MISSING
 def test_grep_with_include(tmp_path):
     (tmp_path / "a.py").write_text("FIND")
     (tmp_path / "a.txt").write_text("FIND")
@@ -268,6 +279,7 @@ def test_grep_rg_error(monkeypatch, tmp_path):
     assert "ERROR rg" in out
 
 
+@_RG_MISSING
 def test_grep_max_total_lines(tmp_path):
     (tmp_path / "a.txt").write_text("hit\n" * 10)
     out = at.grep_tool(
@@ -276,6 +288,7 @@ def test_grep_max_total_lines(tmp_path):
     assert len(out.splitlines()) == 3
 
 
+@_RG_MISSING
 def test_grep_max_files_in_files_mode(tmp_path):
     for i in range(5):
         (tmp_path / f"f{i}.txt").write_text("hit")
