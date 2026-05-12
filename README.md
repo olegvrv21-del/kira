@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/kira-social.jpg" alt="Кира" width="640" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/kira-noir.jpg" />
+    <img src="assets/kira-social.jpg" alt="Кира" width="640" />
+  </picture>
 </p>
 
 <h1 align="center">🌸 Кира</h1>
