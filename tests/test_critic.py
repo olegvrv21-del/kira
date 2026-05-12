@@ -1,6 +1,27 @@
+"""Critic tests — exercise the parser plus the llm/-routed review loop.
+
+After the agent_critic → llm/ migration, network mocking goes through
+`llm.register("amazon-q", lambda: MockProvider(...))` instead of patching
+`q_client.stream_q`. The dedicated test_critic_via_mock_provider acts as a
+regression guard: if anyone re-imports q_client into agent_critic the
+KIRA_LLM_PROVIDER=mock route in test_review_diff_uses_provider_layer fails.
+"""
+
 import pytest
 
 import agent_critic
+from llm import MockProvider, register
+
+
+def _register_mock(text: str) -> MockProvider:
+    """Make KIRA_LLM_PROVIDER='amazon-q' actually return our MockProvider.
+
+    review_diff() routes the 'amazon-q' name through QProvider directly, so
+    we override the 'mock' factory and flip the env in the test instead.
+    """
+    p = MockProvider(script=[{"type": "text", "text": text}])
+    register("mock", lambda: p)
+    return p
 
 
 def test_parse_ok():
@@ -37,10 +58,8 @@ async def test_review_diff_empty_short_circuits():
 
 @pytest.mark.asyncio
 async def test_review_diff_mocked_block(monkeypatch):
-    async def fake_stream(api_key, body, **kw):
-        yield ("assistantResponseEvent", {"content": "VERDICT: BLOCK\nREASON: looks bad\nISSUES:\n- nope"})
-
-    monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
+    _register_mock("VERDICT: BLOCK\nREASON: looks bad\nISSUES:\n- nope")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
     v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+secret\n", intent="add stuff")
     assert v["verdict"] == "BLOCK"
     assert v["reason"] == "looks bad"
@@ -49,35 +68,66 @@ async def test_review_diff_mocked_block(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_review_diff_mocked_ok(monkeypatch):
-    async def fake_stream(api_key, body, **kw):
-        yield ("assistantResponseEvent", {"content": "VERDICT: OK"})
-
-    monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
+    _register_mock("VERDICT: OK")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
     v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+ok\n")
     assert v["verdict"] == "OK"
 
 
 @pytest.mark.asyncio
 async def test_review_diff_truncates(monkeypatch):
-    seen = {}
+    """Long diffs must be truncated before being shipped to the provider.
 
-    async def fake_stream(api_key, body, **kw):
-        seen["user"] = body["conversationState"]["currentMessage"]["userInputMessage"]["content"]
-        yield ("assistantResponseEvent", {"content": "VERDICT: OK"})
-
-    monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
+    We inspect the canonical Message[] the provider receives and assert the
+    truncation marker appears in the user turn.
+    """
+    p = _register_mock("VERDICT: OK")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
     huge = "+" + "a" * 200_000
     await agent_critic.review_diff("key", huge)
-    assert "diff truncated" in seen["user"]
+    assert p.calls, "provider was never called"
+    user_msg = next(m for m in p.calls[-1]["messages"] if m.role == "user")
+    assert "diff truncated" in user_msg.content
 
 
 @pytest.mark.asyncio
 async def test_review_diff_handles_exception(monkeypatch):
-    async def fake_stream(api_key, body, **kw):
-        raise RuntimeError("q down")
-        yield None  # pragma: no cover
+    """Provider exceptions become an advisory 'OK' verdict — the critic must
+    never crash the commit path on transient backend errors."""
+    from llm import register as _register
 
-    monkeypatch.setattr(agent_critic.q_client, "stream_q", fake_stream)
+    class BoomProvider:
+        name = "mock"
+        supported_models = ["x"]
+
+        async def stream(self, messages, tools, *, model, cancel=None, timeout=300, extra=None):
+            raise RuntimeError("q down")
+            yield  # pragma: no cover
+
+        async def health(self):
+            return {"name": self.name, "status": "ok"}
+
+    _register("mock", lambda: BoomProvider())
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
     v = await agent_critic.review_diff("key", "diff")
     assert v["verdict"] == "OK"
     assert any("critic-error" in i for i in v["issues"])
+
+
+@pytest.mark.asyncio
+async def test_review_diff_routes_through_provider_layer(monkeypatch):
+    """Regression guard for the q_client → llm/ migration.
+
+    If anyone re-imports q_client into agent_critic and bypasses the
+    abstraction, this test fails because the MockProvider never gets
+    called and we'd see an empty-output 'OK' instead of the scripted BLOCK.
+    """
+    p = _register_mock("VERDICT: BLOCK\nREASON: routed correctly")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
+    v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+y\n")
+    assert v["verdict"] == "BLOCK"
+    assert v["reason"] == "routed correctly"
+    # And the mock recorded exactly one call with our system+user messages.
+    assert len(p.calls) == 1
+    roles = [m.role for m in p.calls[0]["messages"]]
+    assert roles == ["system", "user"]

@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import re
 
-import q_client
 from agent_keys import key_pool
 
 _DEFAULT_MODEL = os.environ.get("KIRA_CRITIC_MODEL", "claude-haiku-4.5")
@@ -84,45 +83,43 @@ def parse_verdict(text: str) -> dict:
 async def review_diff(
     api_key: str, diff: str, *, intent: str = "", model: str | None = None, timeout: float = 60.0
 ) -> dict:
-    """Run the critic on a diff. Returns parsed verdict dict."""
+    """Run the critic on a diff. Returns parsed verdict dict.
+
+    Routes through the `llm/` provider abstraction — KIRA_LLM_PROVIDER picks
+    the backend (default: amazon-q). Previously this module imported q_client
+    directly and built a Q-body by hand, which silently broke if anyone
+    switched providers. Closes the last runtime-level Q-shape import.
+    """
     if not diff or not diff.strip():
         return {"verdict": "OK", "reason": "empty diff", "issues": [], "raw": ""}
     model = model or _DEFAULT_MODEL
     body_diff = _truncate(diff, _MAX_DIFF)
-    user = "Intent: " + (intent.strip() or "(not specified)")
-    user += "\n\nDiff to review:\n```\n" + body_diff + "\n```"
-    body = {
-        "conversationState": {
-            "chatTriggerType": "MANUAL",
-            "currentMessage": {
-                "userInputMessage": {
-                    "content": user,
-                    "userInputMessageContext": {},
-                    "origin": "KIRO_CLI",
-                    "modelId": model,
-                }
-            },
-            "history": [
-                {
-                    "userInputMessage": {
-                        "content": CRITIC_SYSTEM,
-                        "userInputMessageContext": {},
-                        "origin": "KIRO_CLI",
-                        "modelId": model,
-                    }
-                }
-            ],
-        }
-    }
+    user_text = "Intent: " + (intent.strip() or "(not specified)")
+    user_text += "\n\nDiff to review:\n```\n" + body_diff + "\n```"
+
+    # Local imports keep `agent_critic` testable without httpx in the path.
+    from llm import Message, get_provider
+
+    provider_name = os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
+    if provider_name == "amazon-q":
+        # Use key_pool / passed-in key explicitly so prod key rotation still wins.
+        from llm.q_provider import QProvider
+
+        provider = QProvider(api_key=key_pool.current() or api_key)
+    else:
+        provider = get_provider(provider_name)
+
+    messages = [
+        Message(role="system", content=CRITIC_SYSTEM),
+        Message(role="user", content=user_text),
+    ]
     text_chunks: list[str] = []
     try:
-        async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, timeout=timeout):
-            if et == "_throttle" or et == "_cancelled":
-                continue
-            if isinstance(payload, dict) and et == "assistantResponseEvent":
-                c = payload.get("content", "")
-                if c:
-                    text_chunks.append(c)
+        async for ev in provider.stream(messages, [], model=model, timeout=timeout):
+            if ev.type == "text" and ev.text:
+                text_chunks.append(ev.text)
+            # throttle / usage / done / error / cancelled — ignored: the critic
+            # is a best-effort advisor, not allowed to block on transient issues.
     except Exception as e:
         return {"verdict": "OK", "reason": "", "issues": [f"critic-error:{type(e).__name__}:{e}"], "raw": ""}
     full = "".join(text_chunks)
