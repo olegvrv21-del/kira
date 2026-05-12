@@ -15,6 +15,8 @@
   🇬🇧 English
   &nbsp;·&nbsp;
   <a href="README.ru.md">🇷🇺 Русский</a>
+  &nbsp;·&nbsp;
+  <a href="ARCHITECTURE.md">🗺️ Architecture guide</a>
 </p>
 
 <p align="center">
