@@ -16,6 +16,7 @@ import { renderMarkdown } from './markdown.js';
 import { renderPlan as _renderPlan, clearPlan as _clearPlan } from './plan.js';
 import { initSkills } from './skills.js';
 import { initDashboard } from './dashboard.js';
+import { createAgentRunner } from './agent_sse.js';
 
 installFetchInterceptor();
 
@@ -797,283 +798,31 @@ installFetchInterceptor();
       sendBtn.title = stop ? (lang === 'ru' ? 'Остановить' : 'Stop') : '';
     }
 
-    async function sendAgent(text, images) {
-      streaming = true;
-      setSendBtnMode(true);
-      addMsg('user', text, null);
-      input.value = ''; input.style.height = 'auto';
-      let curText = null, acc = '';
-      const ensureText = () => {
-        if (!curText) { curText = addMsg('assistant', '', null); curText.wrap.classList.add('typing'); acc = ''; }
-        return curText;
-      };
-      const cards = new Map();
-      let sawRestart = false;
-      agentAbort = new AbortController();
-      try {
-        const r = await fetch('/agent', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text, model: currentModel, session_id: agentSessionId, images: images || null }),
-          signal: agentAbort.signal,
-        });
-        if (!r.ok) {
-          const err = await r.text();
-          addMsg('assistant', `${t('error_prefix')} ${r.status}: ${err}`, null, { error: true });
-          return;
-        }
-        const reader = r.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\n'); buf = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            let j; try { j = JSON.parse(line.slice(6)); } catch { continue; }
-            if (j.type === 'meta') { agentSessionId = j.session_id; }
-            else if (j.type === 'plan') { renderPlan(j.plan); }
-            else if (j.type === 'iframe') {
-              const empty = messagesEl.querySelector('.empty'); if (empty) empty.remove();
-              const wrap = document.createElement('div');
-              wrap.className = 'msg assistant iframe-msg';
-              const head = document.createElement('div');
-              head.className = 'iframe-head';
-              head.textContent = j.title || 'iframe';
-              const ifr = document.createElement('iframe');
-              ifr.sandbox = 'allow-scripts';
-              ifr.referrerPolicy = 'no-referrer';
-              ifr.srcdoc = j.html || '';
-              ifr.style.width = '100%';
-              ifr.style.minHeight = '300px';
-              ifr.style.border = '0';
-              ifr.style.borderRadius = '10px';
-              ifr.style.background = '#fff';
-              wrap.appendChild(head); wrap.appendChild(ifr);
-              messagesEl.appendChild(wrap);
-              messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-            }
-            else if (j.type === 'text') {
-              ensureText(); acc += j.delta; curText.txt.textContent = acc; curText.txt.dataset.raw = acc;
-              messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-            }
-            else if (j.type === 'tool_call') {
-              if (curText) {
-                curText.wrap.classList.remove('typing');
-                if (acc) renderMarkdown(curText.txt, acc);
-                curText = null;
-              }
-              const card = addAgentToolCard(j.id, j.name);
-              card.querySelector('.tool-input').textContent = JSON.stringify(j.input, null, 2);
-              let sum = (j.input.path || j.input.command || j.input.pattern || '').toString();
-              if (j.name === 'use_subagent') {
-                const subs = j.input?.content?.subagents || [];
-                sum = j.input?.command === 'ListAgents'
-                  ? 'ListAgents'
-                  : `${subs.length} ✕ ${t('agent_tool')}`;
-              }
-              card.querySelector('.tool-summary').textContent = sum.slice(0, 80);
-              cards.set(j.id, card);
-              // mark if the agent is restarting the service — the SSE will die
-              const _cmd = (j.input?.command || '').toString();
-              if (_cmd.includes('/admin/restart') || _cmd.includes('systemctl restart webchat')) {
-                sawRestart = true;
-              }
-            }
-            else if (j.type === 'subagent_start') {
-              const card = cards.get(j.parent_id);
-              if (card) {
-                const list = document.createElement('div');
-                list.className = 'subagent-list';
-                list.innerHTML = j.queries.map((q,i) =>
-                  `<div class="subagent-item pending" data-idx="${i}">
-                     <span class="sa-spinner">○</span>
-                     <span class="sa-query"></span>
-                     <span class="sa-preview" style="color:var(--muted);font-size:11px"></span>
-                   </div>`).join('');
-                list.querySelectorAll('.subagent-item').forEach((it,i) => {
-                  it.querySelector('.sa-query').textContent = j.queries[i].slice(0, 120);
-                });
-                card.appendChild(list);
-                card.classList.add('open');
-              }
-            }
-            else if (j.type === 'subagent_done') {
-              const card = cards.get(j.parent_id);
-              if (card) {
-                const item = card.querySelector(`.subagent-item[data-idx="${j.index}"]`);
-                if (item) {
-                  item.classList.remove('pending');
-                  item.classList.add(j.status);
-                  item.querySelector('.sa-spinner').textContent = j.status === 'success' ? '●' : '✕';
-                  item.querySelector('.sa-preview').textContent = ' – ' + (j.preview || '').slice(0, 160);
-                }
-              }
-            }
-            else if (j.type === 'critic') {
-              const card = cards.get(j.id);
-              if (card) {
-                let bar = card.querySelector('.tool-critic');
-                if (!bar) {
-                  bar = document.createElement('div');
-                  bar.className = 'tool-critic';
-                  bar.style.cssText = 'margin:6px 0;padding:6px 10px;border-radius:6px;font-size:12px;';
-                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
-                }
-                const ok = j.verdict !== 'BLOCK';
-                bar.style.background = ok ? 'rgba(76,175,80,0.10)' : 'rgba(255,82,82,0.10)';
-                bar.style.borderLeft = `3px solid ${ok ? '#4caf50' : '#ff5252'}`;
-                bar.style.color = ok ? '#9ccc65' : '#ff8a80';
-                const issues = (j.issues || []).slice(0, 5)
-                  .map(s => '<div style="opacity:.8">· ' + s.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + '</div>').join('');
-                bar.innerHTML = `<b>🔎 Critic: ${j.verdict}</b>` +
-                  (j.reason ? ' — ' + j.reason : '') + issues;
-              }
-            }
-            else if (j.type === 'dev_loop_iter' || j.type === 'dev_loop_test' || j.type === 'dev_loop_done') {
-              const card = cards.get(j.parent_id);
-              if (card) {
-                let bar = card.querySelector('.dev-loop');
-                if (!bar) {
-                  bar = document.createElement('div');
-                  bar.className = 'dev-loop';
-                  bar.style.cssText = 'margin:8px 0;padding:8px 10px;background:rgba(126,87,194,0.08);border-left:3px solid #7e57c2;border-radius:4px;font-size:12px;font-family:monospace;';
-                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
-                }
-                const line = document.createElement('div');
-                if (j.type === 'dev_loop_iter') {
-                  const icon = j.action === 'edit' ? '✏️' : '🧪';
-                  line.textContent = `${icon} iter ${j.n}/${j.max}: ${j.summary}`;
-                } else if (j.type === 'dev_loop_test') {
-                  line.style.color = j.passed ? '#4caf50' : '#e57373';
-                  line.textContent = `  → ${j.passed ? 'PASS' : 'FAIL'} ${j.summary || ''}`;
-                } else {
-                  line.style.fontWeight = 'bold';
-                  line.style.color = j.ok ? '#4caf50' : '#e57373';
-                  line.textContent = `${j.ok ? '✅' : '❌'} dev_loop ${j.summary}`;
-                }
-                bar.appendChild(line);
-              }
-            }
-            else if (j.type === 'hook') {
-              const card = cards.get(j.id);
-              if (card) {
-                let bar = card.querySelector('.tool-hooks');
-                if (!bar) {
-                  bar = document.createElement('div');
-                  bar.className = 'tool-hooks';
-                  bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin:4px 0;font-size:11px;';
-                  card.insertBefore(bar, card.querySelector('.out-wrap') || null);
-                }
-                const badge = document.createElement('span');
-                const at = j.action_type;
-                const color = at === 'deny' ? '#ff5252' :
-                              (at === 'shell' ? '#42a5f5' : '#9aa');
-                badge.style.cssText = `background:${color}22;color:${color};border:1px solid ${color}66;padding:1px 6px;border-radius:6px;`;
-                const icon = at === 'deny' ? '⛔' : (at === 'shell' ? '⚡' : 'hook');
-                badge.textContent = `${icon} ${j.hook_id || ''} ${j.message ? '· ' + j.message.slice(0, 80) : ''}`;
-                badge.title = `${j.event} → ${j.type}: ${j.message || ''}`;
-                bar.appendChild(badge);
-              }
-            }
-            else if (j.type === 'tool_result') {
-              const card = cards.get(j.id);
-              if (card) {
-                card.classList.remove('running');
-                card.classList.add(j.status === 'success' ? 'success' : 'error');
-                card.querySelector('.tool-status').textContent = j.status === 'success' ? t('agent_success') : t('agent_error');
-                const outEl = card.querySelector('.tool-output');
-                outEl.textContent = (j.output || '').slice(0, 8000);
-                card.querySelector('.out-wrap').style.display = '';
-                // Special-case: browser_screenshot → embed the image inline
-                if (card.querySelector('.tool-name').textContent === 'browser_screenshot'
-                    && j.status === 'success' && agentSessionId) {
-                  const m = (j.output || '').match(/saved to (\S+)/);
-                  if (m) {
-                    const rel = m[1].replace(/^\/workspace\//, '');
-                    const img = document.createElement('img');
-                    img.src = `/agent/file/${agentSessionId}/${rel}?t=${Date.now()}`;
-                    img.style.maxWidth = '100%';
-                    img.style.borderRadius = '8px';
-                    img.style.marginTop = '8px';
-                    img.style.display = 'block';
-                    card.querySelector('.out-wrap').appendChild(img);
-                  }
-                }
-                // diff panel for fs_write edits
-                if (j.diff) {
-                  attachDiff(card, j.diff, j.diff_lines || 0, j.action_id,
-                             (j.output && (j.output.match(/(?:Replaced 1 occurrence in|Created|Appended \d+ chars to|Inserted after line \d+ in) (\S+)/) || [])[1]) || '');
-                } else if (j.action_id && j.backup) {
-                  // No diff payload (e.g. binary/big) but we still have a rollback target.
-                  attachRollbackOnly(card, j.action_id);
-                }
-              }
-            }
-            else if (j.type === 'stats') { addAgentStats(j); }
-            else if (j.type === 'throttle') {
-              const div = document.createElement('div');
-              div.className = 'agent-stats';
-              div.style.color = '#e6a23c';
-              const reason = j.reason || '?';
-              const sleep = j.sleep ? ` (${j.sleep}s)` : '';
-              div.textContent = `⏳ ${lang === 'ru' ? 'ждём повтор' : 'retrying'} · ${reason}${sleep}`;
-              messagesEl.appendChild(div);
-              messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-            }
-            else if (j.type === 'error') {
-              addMsg('assistant', `${t('error_prefix')}: ${j.message}`, null, { error: true });
-            }
-            else if (j.type === 'cancelled') {
-              const div = document.createElement('div');
-              div.className = 'agent-stats'; div.style.color = '#888';
-              div.textContent = lang === 'ru' ? '⏹ остановлено сервером' : '⏹ stopped';
-              messagesEl.appendChild(div);
-            }
-            else if (j.type === 'done') { if (agentMode) { setTimeout(() => { loadAgentSessions(); refreshAgentBudget(); }, 250); } }
-          }
-        }
-        if (curText) {
-          curText.wrap.classList.remove('typing');
-          if (acc) renderMarkdown(curText.txt, acc);
-        }
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          if (curText) curText.wrap.classList.remove('typing');
-          const div = document.createElement('div');
-          div.className = 'agent-stats'; div.style.color = '#888';
-          div.textContent = lang === 'ru' ? '⏹ остановлено' : '⏹ stopped';
-          messagesEl.appendChild(div);
-          if (agentMode) setTimeout(() => { loadAgentSessions(); refreshAgentBudget(); }, 250);
-        } else if (sawRestart) {
-          // The agent restarted the service; the SSE was torn down by design.
-          const div = document.createElement('div');
-          div.className = 'agent-stats'; div.style.color = 'var(--orange)';
-          div.textContent = lang === 'ru'
-            ? '♻ сервис перезапущен — обнови страницу через ~3 секунды'
-            : '♻ service restarted — reload the page in ~3 seconds';
-          messagesEl.appendChild(div);
-          // schedule auto-check
-          setTimeout(async () => {
-            try {
-              const r = await fetch('/healthz');
-              if (r.ok) {
-                const tip = document.createElement('div');
-                tip.className = 'agent-stats'; tip.style.color = '#6fdd8b';
-                tip.textContent = lang === 'ru' ? '✅ сервис снова в сети' : '✅ service is back online';
-                messagesEl.appendChild(tip);
-                if (agentMode) { loadAgentSessions(); refreshAgentBudget(); }
-              }
-            } catch {}
-          }, 3500);
-        } else {
-          addMsg('assistant', `${t('error_prefix')}: ${err.message || err}`, null, { error: true });
-        }
-      } finally {
-        streaming = false; setSendBtnMode(false); agentAbort = null;
-      }
-    }
+    // Reactive state bag — pure getter/setter proxy over the IIFE-scoped lets,
+    // so modules can mutate them without us having to refactor the rest of
+    // the file to use object property access everywhere.
+    const _agentState = {
+      get streaming()      { return streaming; },
+      set streaming(v)     { streaming = v; },
+      get agentAbort()     { return agentAbort; },
+      set agentAbort(v)    { agentAbort = v; },
+      get agentSessionId() { return agentSessionId; },
+      set agentSessionId(v){ agentSessionId = v; },
+      get currentModel()   { return currentModel; },
+      get agentMode()      { return agentMode; },
+    };
+    const sendAgent = createAgentRunner({
+      state: _agentState,
+      t: (k) => t(k),
+      lang: () => lang,
+      dom: { messagesEl, input },
+      fns: {
+        addMsg, addAgentToolCard, addAgentStats,
+        attachDiff, attachRollbackOnly,
+        setSendBtnMode, renderPlan, renderMarkdown,
+        loadAgentSessions, refreshAgentBudget,
+      },
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

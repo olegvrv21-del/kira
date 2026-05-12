@@ -28,7 +28,7 @@ check root_models   /                    'id="models-view"'
 check root_settings /                    'id="settings-modal"'
 # JS moved to /static/app.js after frontend split.
 check root_setmodel /static/app.js        'applyModel('
-check root_iframe   /static/app.js        "type === 'iframe'"
+check root_iframe   /static/agent_sse.js  "type === 'iframe'"
 check plan_empty    /agent/plan/zzz      '"items":\[\]'
 check actions_list  /agent/actions       '"actions"'
 check limits        /agent/limits        'session_limit'
