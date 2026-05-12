@@ -13,6 +13,9 @@ import {
   safeFilename,
 } from './utils.js';
 import { renderMarkdown } from './markdown.js';
+import { renderPlan as _renderPlan, clearPlan as _clearPlan } from './plan.js';
+import { initSkills } from './skills.js';
+import { initDashboard } from './dashboard.js';
 
 installFetchInterceptor();
 
@@ -455,198 +458,37 @@ installFetchInterceptor();
       document.getElementById('plan-toggle').textContent =
         planPanel.classList.contains('collapsed') ? '+' : '–';
     });
-    function renderPlan(plan) {
-      const items = (plan && plan.items) || [];
-      if (!items.length) { planPanel.style.display = 'none'; planList.innerHTML = ''; return; }
-      planPanel.style.display = '';
-      planList.innerHTML = '';
-      let done = 0;
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i] || {};
-        const li = document.createElement('li');
-        li.className = 'plan-item ' + (it.status || 'pending');
-        const mark = it.status === 'done' ? '✔' : it.status === 'in_progress' ? '▸' : it.status === 'skipped' ? '—' : '·';
-        if (it.status === 'done') done++;
-        li.innerHTML = `<span class="plan-mark">${mark}</span><span class="plan-text"></span>`;
-        li.querySelector('.plan-text').textContent = it.text || '';
-        planList.appendChild(li);
-      }
-      planCounter.textContent = `${done}/${items.length}`;
-    }
-    function clearPlan() { renderPlan({items:[]}); }
+    const _planEls = () => ({ panel: planPanel, list: planList, counter: planCounter });
+    const renderPlan = (plan) => _renderPlan(plan, _planEls());
+    const clearPlan  = () => _clearPlan(_planEls());
 
 
-    async function loadMetrics() {
-      const body = document.getElementById('metrics-body');
-      body.innerHTML = '<div style="color:var(--muted)">…</div>';
-      const w = document.getElementById('metrics-window').value;
-      const url = '/agent/metrics' + (w ? `?window=${w}` : '');
-      try {
-        const r = await fetch(url);
-        const d = await r.json();
-        const cards = [
-          { lbl: 'Total actions', val: d.total, sub: `${d.ok} ok / ${d.fail} fail` },
-          { lbl: 'Success rate', val: pct(d.success_rate), sub: '' },
-          { lbl: 'Sessions', val: d.sessions, sub: '' },
-          { lbl: 'fs_write → verify', val: pct(d.verify_ratio),
-            sub: `${d.writes_verified} / ${d.writes} writes` },
-          { lbl: 'Rollbacks', val: d.rollbacks, sub: '' },
-          { lbl: 'Hook denies', val: d.hook_denies, sub: '' },
-        ];
-        let html = '<div class="metric-grid">' + cards.map(c =>
-          `<div class="metric-card"><div class="lbl">${c.lbl}</div>` +
-          `<div class="val">${c.val ?? '—'}</div>` +
-          `<div class="sub">${c.sub}</div></div>`).join('') + '</div>';
-        // by tool table
-        html += '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">По инструментам</h3>';
-        html += '<table class="metric-table"><thead><tr><th>Tool</th><th>Calls</th><th>OK</th><th>Success</th><th></th></tr></thead><tbody>';
-        for (const t of (d.by_tool || [])) {
-          const sr = t.success_rate;
-          const w = sr != null ? Math.round(sr * 100) : 0;
-          html += `<tr><td><code>${t.tool}</code></td><td>${t.count}</td><td>${t.ok}</td><td>${pct(sr)}</td><td style="width:120px"><div class="metric-bar"><div style="width:${w}%"></div></div></td></tr>`;
-        }
-        html += '</tbody></table>';
-        if (d.top_errors && d.top_errors.length) {
-          html += '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Топ ошибок</h3>';
-          html += '<table class="metric-table"><thead><tr><th>Tool</th><th>Errors</th></tr></thead><tbody>';
-          for (const e of d.top_errors) {
-            html += `<tr><td><code>${e.tool}</code></td><td>${e.count}</td></tr>`;
-          }
-          html += '</tbody></table>';
-        }
-        body.innerHTML = html;
-        loadCoverage();  // append coverage block below
-      } catch (e) {
-        body.innerHTML = `<div style="color:#e57373">${e.message || e}</div>`;
-      }
-    }
+    // === dashboard / actions wiring (was inline; now in dashboard.js) ===
+    const _dash = initDashboard({
+      t,
+      pct,
+      getCurrentModel: () => currentModel,
+      getModels: () => allModels,
+      applyModel: (id) => {
+        applyModel(id);
+        const c = chats.find(x => x.id === activeChatId);
+        if (c) { c.model = id; saveChats(); }
+      },
+      onModelChange: () => {},
+    });
+    const loadMetrics  = _dash.loadMetrics;
+    const loadCoverage = _dash.loadCoverage;
+    const runCoverage  = _dash.runCoverage;
+    const loadActions  = _dash.loadActions;
     document.getElementById('metrics-refresh')?.addEventListener('click', loadMetrics);
     document.getElementById('metrics-window')?.addEventListener('change', loadMetrics);
-
-    async function loadCoverage() {
-      const body = document.getElementById('metrics-body');
-      try {
-        const r = await fetch('/agent/coverage');
-        const d = await r.json();
-        let html = '<h3 style="margin:24px 0 8px;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:10px">Покрытие тестами <button id="cov-refresh" class="sq-btn" style="padding:2px 8px;font-size:11px;text-transform:none;letter-spacing:0">прогнать pytest --cov</button></h3>';
-        if (!d.ok) {
-          html += `<div style="color:#e57373">${d.error || 'нет данных'}</div>`;
-          body.insertAdjacentHTML('beforeend', html);
-          document.getElementById('cov-refresh')?.addEventListener('click', runCoverage);
-          return;
-        }
-        const age = d.age_seconds < 60 ? `${d.age_seconds}s` : d.age_seconds < 3600 ? `${Math.floor(d.age_seconds/60)}m` : `${Math.floor(d.age_seconds/3600)}h`;
-        const totalColor = d.total_percent >= 70 ? '#4caf50' : d.total_percent >= 40 ? '#ff9800' : '#e57373';
-        html += `<div style="display:flex;gap:18px;align-items:baseline;margin-bottom:12px">`
-          + `<div><span style="font-size:28px;font-weight:600;color:${totalColor}">${d.total_percent}%</span> <span style="color:var(--muted);font-size:12px">общее покрытие</span></div>`
-          + `<div style="color:var(--muted);font-size:12px">${d.total_covered} / ${d.total_statements} строк • обновлено ${age} назад</div>`
-          + `</div>`;
-        html += '<table class="metric-table"><thead><tr><th>Файл</th><th>Строк</th><th>Не покрыто</th><th>%</th><th></th></tr></thead><tbody>';
-        for (const f of d.files) {
-          const c = f.percent >= 70 ? '#4caf50' : f.percent >= 40 ? '#ff9800' : '#e57373';
-          const w = Math.round(f.percent);
-          html += `<tr><td><code>${f.path}</code></td><td>${f.statements}</td><td>${f.missing}</td><td style="color:${c};font-weight:600">${f.percent}%</td><td style="width:120px"><div class="metric-bar"><div style="width:${w}%;background:${c}"></div></div></td></tr>`;
-        }
-        html += '</tbody></table>';
-        body.insertAdjacentHTML('beforeend', html);
-        document.getElementById('cov-refresh')?.addEventListener('click', runCoverage);
-      } catch (e) {
-        body.insertAdjacentHTML('beforeend', `<div style="color:#e57373">coverage: ${e.message || e}</div>`);
-      }
-    }
-
-    async function runCoverage() {
-      const btn = document.getElementById('cov-refresh');
-      if (btn) { btn.disabled = true; btn.textContent = 'запускаю pytest …'; }
-      try {
-        const r = await fetch('/agent/coverage/run', { method: 'POST' });
-        const d = await r.json();
-        if (!d.ok) {
-          alert('coverage run failed: ' + (d.error || d.returncode));
-        }
-        await loadMetrics();
-      } catch (e) {
-        alert('coverage run error: ' + e.message);
-      }
-    }
-
-    async function loadActions() {
-      const list = document.getElementById('actions-list');
-      list.innerHTML = '<div style="color:var(--muted)">…</div>';
-      const failOnly = document.getElementById('act-failed-only').checked;
-      try {
-        const r = await fetch('/agent/actions?limit=300');
-        const d = await r.json();
-        let acts = d.actions || [];
-        if (failOnly) acts = acts.filter(a => !a.ok);
-        if (!acts.length) { list.innerHTML = `<div style="color:var(--muted)">${t('actions_empty')}</div>`; return; }
-        list.innerHTML = '';
-        for (const a of acts) {
-          const row = document.createElement('div');
-          row.className = 'act-row ' + (a.ok ? 'ok' : 'fail');
-          const ts = new Date(a.ts * 1000).toLocaleString();
-          let summary = a.file || '';
-          if (!summary) {
-            try { const j = JSON.parse(a.args); summary = j.command || j.path || j.pattern || (j.name||''); } catch {}
-          }
-          if (a.error) summary = a.error;
-          const canRollback = !!a.backup && !!a.file;
-          row.innerHTML = `
-            <span class="act-ts">${ts}</span>
-            <span class="act-tool">${a.tool}</span>
-            <span class="act-summary" title="${(summary||'').replace(/"/g,'&quot;')}">${summary || ''}</span>
-            <button ${canRollback?'':'disabled'} data-id="${a.id}">${t('actions_rollback')}</button>`;
-          row.querySelector('button').addEventListener('click', async () => {
-            if (!confirm(`Rollback ${a.file} ← ${a.backup}?`)) return;
-            const rr = await fetch(`/agent/actions/${a.id}/rollback`, {method:'POST'});
-            const dd = await rr.json();
-            alert(rr.ok ? `OK: ${dd.restored}` : `FAIL: ${dd.detail||JSON.stringify(dd)}`);
-            loadActions();
-          });
-          list.appendChild(row);
-        }
-      } catch (e) {
-        list.innerHTML = `<div style="color:#ef4444">${e}</div>`;
-      }
-    }
     document.addEventListener('DOMContentLoaded', () => {
       const r=document.getElementById('act-refresh'); if (r) r.addEventListener('click', loadActions);
       const f=document.getElementById('act-failed-only'); if (f) f.addEventListener('change', loadActions);
     });
 
-    function renderModelsView() {
-      const grid = document.getElementById('models-grid');
-      if (!grid) return;
-      grid.innerHTML = '';
-      for (const m of allModels) {
-        const tier = m.tier || 'sonnet';
-        const card = document.createElement('div');
-        card.className = 'model-card tier-' + tier;
-        const tags = (m.strengths || []).map(s => `<span class="mc-tag">${s}</span>`).join('');
-        const mult = (m.multiplier != null) ? `×${m.multiplier}` : '';
-        const isActive = m.id === currentModel;
-        const btnLabel = isActive ? (t('model_active') || 'Активна') : (t('model_choose') || 'Выбрать');
-        card.innerHTML = `
-          <div class="mc-head">
-            <div>
-              <div class="mc-title">${m.label}</div>
-              <div class="mc-provider">${m.provider || ''}</div>
-            </div>
-            <span class="mc-mult">${mult}</span>
-          </div>
-          <div class="mc-desc">${m.description || ''}</div>
-          <div class="mc-tags">${tags}</div>
-          <div class="mc-actions"><button class="${isActive?'active':''}" ${isActive?'disabled':''}>${btnLabel}</button></div>`;
-        card.querySelector('button').addEventListener('click', () => {
-          if (m.id === currentModel) return;
-          applyModel(m.id);
-          const c = chats.find(x => x.id === activeChatId);
-          if (c) { c.model = m.id; saveChats(); }
-          renderModelsView();
-        });
-        grid.appendChild(card);
-      }
-    }
+    const renderModelsView = _dash.renderModelsView;
+
     navItems.forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.dataset.nav;
@@ -663,95 +505,22 @@ installFetchInterceptor();
       });
     });
 
-    /* skills modal */
+    /* skills modal (delegated to skills.js) */
     const skillsModal = document.getElementById('skills-modal');
-    const skillsBody = document.getElementById('skills-body');
-    const skillsTitle = document.getElementById('skills-modal-title');
-    const skillsBack = document.getElementById('skills-back');
+    const _skills = initSkills({
+      modal: skillsModal,
+      body: document.getElementById('skills-body'),
+      title: document.getElementById('skills-modal-title'),
+      back: document.getElementById('skills-back'),
+      t,
+    });
+    const openSkillsModal = _skills.open;
     document.getElementById('skills-close').addEventListener('click', () => skillsModal.classList.remove('show'));
     skillsModal.addEventListener('click', (e) => { if (e.target === skillsModal) skillsModal.classList.remove('show'); });
-    skillsBack.addEventListener('click', () => openSkillsModal());
-    async function openSkillsModal() {
-      skillsModal.classList.add('show');
-      skillsTitle.textContent = t('nav_skills');
-      skillsBack.style.display = 'none';
-      skillsBody.innerHTML = '<div style="color:var(--muted)">…</div>';
-      try {
-        const r = await fetch('/skills');
-        const d = await r.json();
-        if (!d.skills || !d.skills.length) { skillsBody.innerHTML = `<div style="color:var(--muted)">${t('skills_empty')}</div>`; return; }
-        skillsBody.innerHTML = '';
-        for (const s of d.skills) {
-          const row = document.createElement('div'); row.className = 'skill-row';
-          row.innerHTML = `<div class="sk-name"></div><div class="sk-desc"></div>`;
-          row.querySelector('.sk-name').textContent = s.name;
-          row.querySelector('.sk-desc').textContent = s.description || '';
-          row.addEventListener('click', () => openSkillDetail(s.name));
-          skillsBody.appendChild(row);
-        }
-      } catch (e) { skillsBody.textContent = String(e); }
-    }
-    async function openSkillDetail(name) {
-      skillsTitle.textContent = name;
-      skillsBack.style.display = '';
-      skillsBody.innerHTML = '<div style="color:var(--muted)">…</div>';
-      try {
-        const r = await fetch('/skills/' + encodeURIComponent(name));
-        const d = await r.json();
-        const pre = document.createElement('div'); pre.className = 'skill-body';
-        pre.textContent = d.body || '';
-        skillsBody.innerHTML = ''; skillsBody.appendChild(pre);
-      } catch (e) { skillsBody.textContent = String(e); }
-    }
+    document.getElementById('skills-back').addEventListener('click', () => _skills.open());
 
-    /* dashboard data */
-    function fmtDate(ts) {
-      if (!ts) return '—';
-      const d = new Date(ts * 1000);
-      const days = Math.max(0, Math.ceil((d - Date.now()) / 86400000));
-      const dateStr = d.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US', { day: '2-digit', month: 'short' });
-      return `${dateStr} · ${t('dash_in_days').replace('{n}', days)}`;
-    }
-    async function loadUsage() {
-      const used = document.getElementById('u-used');
-      const limit = document.getElementById('u-limit');
-      const rem = document.getElementById('u-remaining');
-      const bar = document.getElementById('u-bar');
-      const pill = document.getElementById('u-plan-pill');
-      const ptype = document.getElementById('u-plan-type');
-      const reset = document.getElementById('u-reset');
-      const overage = document.getElementById('u-overage');
-      const orate = document.getElementById('u-overage-rate');
-      rem.textContent = t('dash_loading');
-      try {
-        const r = await fetch('/usage');
-        const d = await r.json();
-        if (!r.ok || d.error) {
-          rem.textContent = (d.error || ('HTTP ' + r.status)).slice(0, 200);
-          return;
-        }
-        const u = Number(d.used) || 0;
-        const lim = Number(d.limit) || 0;
-        used.textContent = u.toFixed(2);
-        limit.textContent = lim.toFixed(0) + ' ' + (d.unit || '');
-        const left = Math.max(0, lim - u);
-        rem.textContent = `${t('dash_remaining')}: ${left.toFixed(2)}`;
-        bar.style.width = lim > 0 ? Math.min(100, (u / lim) * 100).toFixed(1) + '%' : '0';
-        const isPro = /PRO/i.test(d.plan || '') || /PRO/i.test(d.plan_type || '');
-        pill.textContent = d.plan || '—';
-        pill.className = 'pill ' + (isPro ? 'pro' : 'free');
-        ptype.textContent = d.plan_type || '—';
-        reset.textContent = fmtDate(d.reset_at);
-        const ov = Number(d.overage) || 0;
-        const ovCap = Number(d.overage_cap) || 0;
-        const ovStatus = (d.overage_status || '').toUpperCase();
-        overage.textContent = ovStatus === 'DISABLED' ? 'off' : `${ov.toFixed(2)} / ${ovCap.toFixed(0)}`;
-        const rate = Number(d.overage_rate) || 0;
-        orate.textContent = rate > 0 ? `$${rate.toFixed(2)} / credit` : '—';
-      } catch (e) {
-        rem.textContent = String(e).slice(0, 200);
-      }
-    }
+    /* dashboard data (delegated to dashboard.js) */
+    const loadUsage = () => _dash.loadUsage(lang);
     document.getElementById('u-refresh').addEventListener('click', loadUsage);
 
     /* files */
