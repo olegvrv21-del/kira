@@ -95,6 +95,18 @@ export function createComposer(ctx) {
       } catch {}
     });
     actions.appendChild(copyBtn);
+    // On touch devices toggle a .show-actions class on tap so the buttons
+    // appear above the bubble instead of always overlapping the text.
+    if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+      wrap.addEventListener('click', (e) => {
+        if (e.target.closest('.msg-actions')) return;
+        const wasShown = wrap.classList.contains('show-actions');
+        for (const m of document.querySelectorAll('.msg.show-actions')) {
+          if (m !== wrap) m.classList.remove('show-actions');
+        }
+        wrap.classList.toggle('show-actions', !wasShown);
+      });
+    }
     if (opts.editable) {
       const editBtn = document.createElement('button'); editBtn.type = 'button';
       editBtn.textContent = lang === 'ru' ? 'Редактировать' : 'Edit';

@@ -661,10 +661,15 @@
     position: absolute; top: 4px; right: 6px; display: none; gap: 4px;
   }
   .msg.assistant:hover .msg-actions, .msg.user:hover .msg-actions { display: flex; }
-  /* touch devices have no hover -> always show actions; styled muted by default */
+  /* touch devices have no :hover -> reveal actions only when user taps
+     the bubble (composer.js toggles .show); never overlay them on top of
+     short messages by default. */
+  .msg.show-actions .msg-actions { display: flex; opacity: 1; }
   @media (hover: none) {
-    .msg-actions { display: flex !important; opacity: 0.55; }
+    .msg-actions { background: var(--bg); border-radius: 8px; padding: 2px; }
     .msg-actions button { padding: 6px 10px; font-size: 12px; }
+    /* Place actions ABOVE the bubble on mobile so they never cover text. */
+    .msg-actions { top: -34px; right: 6px; }
   }
   .msg-actions button {
     background: rgba(20,20,26,0.7); color: var(--muted); border: 1px solid var(--border);
