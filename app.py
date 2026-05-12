@@ -742,7 +742,53 @@ agent_runtime._cost_limit_exceeded = _cost_limit_check
 
 # In-memory cache so we don't re-read SQLite on every turn of an active session.
 # Key is (user_id, sid) so two users with the same sid don't collide.
-_AGENT_SESSIONS: dict[tuple[str, str], list[dict]] = {}
+#
+# Bounded LRU: an unbounded dict was a slow memory leak in prod — every new
+# session (TTL=30d) accumulated its full history (incl. base64 images) in
+# RAM forever. The cache only saves a SQLite roundtrip per turn; on eviction
+# we fall back to load_history(), which is cheap. Tune via KIRA_SESSION_CACHE_MAX.
+from collections import OrderedDict
+import threading as _threading
+
+_SESSION_CACHE_MAX = int(os.environ.get("KIRA_SESSION_CACHE_MAX", "128"))
+
+
+class _SessionCache:
+    """Tiny thread-safe LRU. dict-like surface so callers stay simple."""
+
+    def __init__(self, maxsize: int):
+        self.maxsize = max(1, maxsize)
+        self._d: "OrderedDict[Any, list[dict]]" = OrderedDict()
+        self._lock = _threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            v = self._d.get(key, default)
+            if v is not default and key in self._d:
+                self._d.move_to_end(key)
+            return v
+
+    def __setitem__(self, key, value) -> None:
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self.maxsize:
+                self._d.popitem(last=False)
+
+    def pop(self, key, default=None):
+        with self._lock:
+            return self._d.pop(key, default)
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return key in self._d
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._d)
+
+
+_AGENT_SESSIONS: _SessionCache = _SessionCache(_SESSION_CACHE_MAX)
 
 
 @app.post("/agent")
