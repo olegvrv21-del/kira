@@ -109,42 +109,36 @@ MAX_TURNS = 25
 async def _llm_one_shot(
     api_key: str, prompt: str, model: str, system: str | None = None, max_tokens: int | None = None
 ) -> str:
-    """Single-turn call to Q with no tools and no history.
-    Returns final assistant text. Used by the `llm_one_shot` tool.
+    """Single-turn call with no tools and no history.
+
+    Goes through the `llm/` provider layer (phase 3a of the provider-abstraction
+    migration). Provider is chosen by KIRA_LLM_PROVIDER env (default: amazon-q).
+    Tests can swap in MockProvider via `llm.register(...)` or by passing
+    `extra={"provider": MockProvider(...)}` if we ever expose that hook.
     """
-    cwd = "/workspace"
-    history = []
+    from llm import Message, get_provider
+
     sys_text = system or "You are a helpful assistant. Be concise."
-    history.append(
-        {
-            "userInputMessage": {
-                "content": sys_text,
-                "userInputMessageContext": {"envState": _env_state(cwd)},
-                "origin": "KIRO_CLI",
-                "modelId": model,
-            }
-        }
-    )
-    current = _user_msg(prompt, model, cwd)
-    body = {
-        "conversationState": {
-            "chatTriggerType": "MANUAL",
-            "conversationId": str(uuid.uuid4()),
-            "agentContinuationId": str(uuid.uuid4()),
-            "agentTaskType": "vibe",
-            "history": history,
-            "currentMessage": current,
-        }
-    }
-    chunks: list[str] = []
+    messages = [
+        Message(role="system", content=sys_text),
+        Message(role="user", content=prompt),
+    ]
     try:
-        async for et, payload in q_client.stream_q(key_pool.current() or api_key, body, timeout=120):
-            if et == "_throttle":
-                continue
-            if et == "assistantResponseEvent" and isinstance(payload, dict):
-                c = payload.get("content", "")
-                if c:
-                    chunks.append(c)
+        # api_key is passed for back-compat with tests that stub q_client at
+        # the module level; QProvider will fall back to key_pool if None/empty.
+        provider_name = os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
+        if provider_name == "amazon-q":
+            from llm.q_provider import QProvider
+
+            provider = QProvider(api_key=key_pool.current() or api_key)
+        else:
+            provider = get_provider(provider_name)
+
+        chunks: list[str] = []
+        async for ev in provider.stream(messages, [], model=model, timeout=120):
+            if ev.type == "text" and ev.text:
+                chunks.append(ev.text)
+            # throttle / usage / done events are ignored here
     except Exception as e:
         return f"[llm_one_shot error] {type(e).__name__}: {e}"
     out = "".join(chunks).strip()

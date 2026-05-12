@@ -252,6 +252,50 @@ async def test_llm_one_shot_handles_exception():
 
 
 @pytest.mark.asyncio
+async def test_llm_one_shot_via_mock_provider(monkeypatch):
+    """Phase 3a guard: _llm_one_shot routes through the llm/ abstraction.
+
+    By setting KIRA_LLM_PROVIDER=mock and registering a deterministic
+    MockProvider, we should get the mock's output WITHOUT touching q_client.
+    This proves the provider layer is actually wired into the runtime.
+    """
+    import llm
+    from llm import MockProvider
+
+    captured = {}
+
+    def factory():
+        # Capture messages so we can assert system+user shape.
+        p = MockProvider(
+            [
+                {"type": "text", "text": "hello "},
+                {"type": "text", "text": "from mock"},
+            ]
+        )
+        captured["provider"] = p
+        return p
+
+    llm.register("mock", factory)
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
+
+    # Ensure q_client isn't even called — replace stream_q with a poison pill.
+    async def boom(*a, **kw):
+        raise AssertionError("q_client must not be called when provider=mock")
+        yield None  # pragma: no cover  (make it a generator)
+
+    with patch.object(q_client, "stream_q", boom):
+        out = await ar._llm_one_shot("k", "hi there", "mock-1")
+
+    assert out == "hello from mock"
+    p = captured["provider"]
+    assert len(p.calls) == 1
+    roles = [m.role for m in p.calls[0]["messages"]]
+    assert roles == ["system", "user"]
+    assert p.calls[0]["messages"][1].content == "hi there"
+    assert p.calls[0]["model"] == "mock-1"
+
+
+@pytest.mark.asyncio
 async def test_llm_one_shot_empty_response_marker():
     async def empty(api_key, body, **kw):
         # need to be a generator that yields nothing
