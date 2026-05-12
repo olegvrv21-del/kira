@@ -1,0 +1,87 @@
+name: Deploy to prod
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: rsync + restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Gate on the test job in ci.yml: deploy only runs if CI is green for the
+    # same SHA. workflow_run would be cleaner, but push-triggered deploys with
+    # a needs-style guard via gh API is overkill. Keep it simple: if you push
+    # red code, this still deploys -- run smoke locally before pushing.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::PROD_SSH_KEY secret is not set. See .github/workflows/deploy.yml"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.PROD_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync source to prod
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+          USER: ${{ secrets.PROD_USER }}
+        run: |
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.venv/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc' \
+            --exclude '.pytest_cache/' \
+            --exclude '.ruff_cache/' \
+            --exclude 'agent_sessions.db*' \
+            --exclude 'sandbox/' \
+            --exclude '.env' \
+            -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no" \
+            ./ "$USER@$HOST:webchat/"
+
+      - name: Restart service
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+          USER: ${{ secrets.PROD_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no "$USER@$HOST" \
+            'sudo systemctl restart webchat && sleep 3 && systemctl is-active webchat'
+
+      - name: Smoke test
+        env:
+          KIRA_URL: ${{ secrets.KIRA_URL }}
+          KIRA_AUTH_TOKEN: ${{ secrets.KIRA_AUTH_TOKEN }}
+        run: |
+          # Minimal smoke: /healthz and /agent/health must return 200.
+          # Full smoke (tests/smoke_live.sh) requires SSH and is run manually.
+          set -e
+          curl -fsS "$KIRA_URL/healthz" >/dev/null
+          curl -fsS -H "Authorization: Bearer $KIRA_AUTH_TOKEN" \
+            "$KIRA_URL/agent/health" | head -c 500
+          echo
+          echo "Deploy OK"
+
+      - name: Notify on failure (Telegram)
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+              -d chat_id="$TG_CHAT" \
+              -d text="❌ Kira deploy failed for ${GITHUB_SHA::7} (${GITHUB_REF_NAME})" || true
+          fi

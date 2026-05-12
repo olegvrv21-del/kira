@@ -50,16 +50,17 @@
   each session gets its own container with a writable bind-mount of the source tree
 - **Frontend**: vanilla HTML/JS, SSE for streaming, plain CSS
 
-## Tools (29)
+## Tools (38)
 
 | Category | Tools |
 |---|---|
-| Shell / FS | `execute_bash`, `fs_read`, `fs_write`, `glob`, `grep`, `change_dir`, `patch` |
-| Code intel | `keyword_search`, `outline`, `verify_change` |
-| Browser    | `browser_navigate`, `browser_text`, `browser_eval`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_console_logs`, `browser_network`, `browser_accessibility`, `browser_emulate` |
+| Shell / FS | `execute_bash`, `fs_read`, `fs_write`, `patch`, `glob`, `grep`, `keyword_search`, `change_dir` |
+| Code intel | `outline`, `find_definition`, `find_references`, `rename_symbol`, `diagnostics`, `lint` |
+| Execution  | `run_tests`, `verify_change`, `dev_loop`, `coverage_status`, `review_changes` |
 | Git        | `git`, `git_commit` |
-| Build / QA | `run_tests`, `lint` |
-| Meta       | `use_subagent`, `load_skill`, `plan`, `llm_one_shot`, `output_iframe` |
+| Browser    | `browser_navigate`, `browser_click`, `browser_type`, `browser_text`, `browser_eval`, `browser_screenshot`, `browser_console_logs`, `browser_network`, `browser_accessibility`, `browser_emulate`, `output_iframe` |
+| Planning   | `plan`, `use_subagent`, `llm_one_shot`, `load_skill` |
+| Memory     | `memory_add`, `memory_search` |
 
 ## Features
 
