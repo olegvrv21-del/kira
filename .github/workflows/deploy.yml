@@ -20,6 +20,8 @@ jobs:
     # red code, this still deploys -- run smoke locally before pushing.
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up SSH
         env:
@@ -39,8 +41,11 @@ jobs:
           HOST: ${{ secrets.PROD_HOST }}
           USER: ${{ secrets.PROD_USER }}
         run: |
+          # NOTE: we DO sync .git so the agent's git_commit tool works
+          # against /home/exedev/webchat. Side-effect: --delete will overwrite
+          # any agent-side local commits on next deploy. Push from prod or via
+          # /tmp/kira-fix if you want to keep them.
           rsync -az --delete \
-            --exclude '.git/' \
             --exclude '.venv/' \
             --exclude '__pycache__/' \
             --exclude '*.pyc' \
