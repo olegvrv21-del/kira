@@ -15,12 +15,14 @@
   <a href="README.md">🇬🇧 English</a>
   &nbsp;·&nbsp;
   🇷🇺 Русский
+  &nbsp;·&nbsp;
+  <a href="ARCHITECTURE.md">🗺️ Architecture guide</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/coverage-93.5%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-646-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
+  <img src="https://img.shields.io/badge/tests-703-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
 </p>
 
@@ -28,8 +30,8 @@
 
 Кира — это полноценный AI-агент, который умеет редактировать собственный
 исходный код, гонять тесты, коммитить, ходить в браузер и помнить контекст
-между сессиями. Работает как FastAPI-сервис, общается с [Kiro Q](https://kiro.dev/)
-по HTTPS и поднимает чат-UI с 29 инструментами в Docker-песочнице.
+между сессиями. Работает как FastAPI-сервис, стримит ответы по SSE и
+поднимает чат-UI с **38 инструментами** в Docker-песочницах (по одной на сессию).
 
 ## Screenshots
 
@@ -78,6 +80,20 @@
   keeps 14 days.
 - **Models selector** — UI lets you pick model tier (Opus / Sonnet / Haiku) per task.
 - **Multimodal** — image input via base64 in the request body.
+- **Telegram-бот** (`ops/tg_bot.py`) — общение с Кирой из TG: markdown
+  рендеринг, авторазбивка длинных ответов (безопасно для code-fence),
+  фото в base64 → `/agent`, опциональный voice-to-text
+  (`faster-whisper` локально или Groq API).
+- **Multi-user (lite)** — bearer-токен → `sha256(token)[:12] = user_id`;
+  сессии, планы, кредиты, файлы и `/agent` изолированы по владельцу.
+  Legacy NULL-owner рекорды видны всем, пока не claim-нутся при первом
+  авторизованном save.
+- **LLM provider abstraction** (`llm/`) — `base.py` (Message / ToolCall /
+  StreamEvent / `LLMProvider` protocol) + `q_provider.py` + `mock_provider.py`,
+  выбор через `KIRA_LLM_PROVIDER`. Vendor lock-in на Amazon Q сломан.
+- **Push-to-prod CD** — `.github/workflows/deploy.yml`: push в `main` → rsync
+  по SSH → `systemctl restart webchat` + `kira-tg-bot` → smoke `/healthz`
+  → TG-alert при ошибке. Латенси ~50с.
 
 ## Layout
 
@@ -95,7 +111,7 @@ index.html            # frontend
 q_client.py           # Kiro Q API client
 ops/                  # systemd units, backup.sh
 skills/               # markdown playbooks
-tests/                # 52 pytest + 12-check smoke script
+tests/                # 703 pytest + smoke script
 ```
 
 ## Quick start
@@ -142,15 +158,18 @@ docker build -t kira-sandbox:latest sandbox/
 ## Tests
 
 ```bash
-make test    # 52 pytest
-make smoke   # 12 live checks against running service
+make test    # 703 pytest
+make smoke   # live HTTP-проверки против живого сервиса
 make all     # both
 ```
 
 ## Status
 
-Phases 1–5 + iterations A/B/C complete. All tests green. Next planned:
-real LSP integration (pyright + typescript-language-server).
+Production-grade. 703 теста при ~94% покрытии, CI зелён, push-to-prod CD
+живой, развёрнута на disk-photon.exe.xyz. LLM provider abstraction готова;
+multi-user lite в проде; Telegram-фронтенд с markdown + photo + voice.
+Дальше: реальная LSP-интеграция (pyright + typescript-language-server)
+и дальнейшее дробление фронтенда.
 
 ## Documentation
 
