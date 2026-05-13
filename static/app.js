@@ -21,6 +21,7 @@ import { createToolCards } from './tool_cards.js';
 import { createAgentSessions } from './sessions.js';
 import { createComposer } from './composer.js';
 import { createExporters } from './exporters.js';
+import { isNetworkError, waitForConnection } from './net_status.js';
 
 installFetchInterceptor();
 
@@ -570,7 +571,17 @@ installFetchInterceptor();
         renderChatList();
         chatTitleEl.textContent = chats.find(c => c.id === activeChatId)?.title || t('new_chat');
       } catch (err) {
-        if (!asst.txt.textContent) { asst.txt.textContent = `${t('error_prefix')}: ` + err.message; asst.wrap.classList.add('error'); }
+        if (err.name === 'AbortError') {
+          // user pressed Stop; do nothing
+        } else if (isNetworkError(err)) {
+          // Wi-Fi blip / proxy reset / VM restart mid-stream. Show a single
+          // retry banner that auto-clears on /healthz 200.
+          asst.wrap.classList.remove('typing');
+          await waitForConnection(messagesEl, { lang });
+        } else if (!asst.txt.textContent) {
+          asst.txt.textContent = `${t('error_prefix')}: ` + err.message;
+          asst.wrap.classList.add('error');
+        }
       } finally {
         asst.wrap.classList.remove('typing');
         streaming = false; setSendBtnMode(false); chatAbort = null; sendBtn.disabled = false; input.focus();

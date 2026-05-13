@@ -1,3 +1,4 @@
+import { isNetworkError, waitForConnection } from './net_status.js';
 // Agent SSE driver — POST /agent and stream responses into the chat.
 function _authedFileUrl(sid, rel) {
   let tok = '';
@@ -329,25 +330,16 @@ export function createAgentRunner(opts) {
         div.textContent = _lang() === 'ru' ? '⏹ остановлено' : '⏹ stopped';
         messagesEl.appendChild(div);
         if (state.agentMode) setTimeout(() => { loadAgentSessions(); refreshAgentBudget(); }, 250);
-      } else if (sawRestart) {
-        const div = document.createElement('div');
-        div.className = 'agent-stats'; div.style.color = 'var(--orange)';
-        div.textContent = _lang() === 'ru'
-          ? '♻ сервис перезапущен — обнови страницу через ~3 секунды'
-          : '♻ service restarted — reload the page in ~3 seconds';
-        messagesEl.appendChild(div);
-        setTimeout(async () => {
-          try {
-            const r = await fetch('/healthz');
-            if (r.ok) {
-              const tip = document.createElement('div');
-              tip.className = 'agent-stats'; tip.style.color = '#6fdd8b';
-              tip.textContent = _lang() === 'ru' ? '✅ сервис снова в сети' : '✅ service is back online';
-              messagesEl.appendChild(tip);
-              if (state.agentMode) { loadAgentSessions(); refreshAgentBudget(); }
-            }
-          } catch {}
-        }, 3500);
+      } else if (sawRestart || isNetworkError(err)) {
+        // Either /admin/restart was observed mid-stream OR the fetch died
+        // with TypeError ("Failed to fetch" / NetworkError / Load failed).
+        // Both look the same to the user: connection broke. Show a single
+        // retry banner that auto-clears on /healthz 200.
+        if (curText) curText.wrap.classList.remove('typing');
+        const ok = await waitForConnection(messagesEl, { lang: _lang() });
+        if (ok && state.agentMode) {
+          loadAgentSessions(); refreshAgentBudget();
+        }
       } else {
         addMsg('assistant', `${_t('error_prefix')}: ${err.message || err}`, null, { error: true });
       }
