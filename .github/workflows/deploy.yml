@@ -23,12 +23,14 @@ jobs:
     timeout-minutes: 10
     # Only deploy on direct pushes, workflow_dispatch, or a SUCCESSFUL
     # Kira auto-merge run that landed on main. Avoid double-runs.
+    # NOTE: workflow_run.head_branch reflects the PR source branch (kira/*),
+    # not the merge target — so we cannot filter on head_branch == 'main'.
+    # Auto-merge only merges Kira PRs into main, so a successful run is enough.
     if: >
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+       github.event.workflow_run.conclusion == 'success')
     # Gate on the test job in ci.yml: deploy only runs if CI is green for the
     # same SHA. workflow_run would be cleaner, but push-triggered deploys with
     # a needs-style guard via gh API is overkill. Keep it simple: if you push
