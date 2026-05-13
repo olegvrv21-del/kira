@@ -144,15 +144,23 @@ def get_month_credits() -> float:
 def record_credits(sid: str, credits_total_for_session: float, owner_id: str | None = None) -> None:
     """Set absolute session total; bump daily by the delta. If owner_id is
     given, also bump per-user daily totals so /agent/limits can be sliced
-    per user."""
+    per user.
+
+    Also stamps `owner_id` on the sessions row when creating/claiming it, so a
+    session that receives its first credit event BEFORE save_session() runs
+    does not end up with NULL owner (which would leak it to every user via
+    the legacy back-compat rule in list_sessions / _owner_ok).
+    """
     with _conn() as c:
         row = c.execute("SELECT credits FROM sessions WHERE sid=?", (sid,)).fetchone()
         prev = float(row[0]) if row and row[0] is not None else 0.0
         delta = max(0.0, credits_total_for_session - prev)
         c.execute(
-            "INSERT INTO sessions(sid, credits, created_at, updated_at) VALUES (?,?,?,?) "
-            "ON CONFLICT(sid) DO UPDATE SET credits=excluded.credits",
-            (sid, credits_total_for_session, time.time(), time.time()),
+            "INSERT INTO sessions(sid, credits, created_at, updated_at, owner_id) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(sid) DO UPDATE SET "
+            "credits=excluded.credits, "
+            "owner_id=COALESCE(sessions.owner_id, excluded.owner_id)",
+            (sid, credits_total_for_session, time.time(), time.time(), owner_id),
         )
         if delta > 0:
             day = _today_key()
