@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import agent_freeze
 import agent_runtime
 import agent_skills
 import agent_store
@@ -766,6 +767,9 @@ async def stream_omni(model: str, msgs: list):
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    if agent_freeze.is_frozen():
+        info = agent_freeze.freeze_info()
+        return JSONResponse({"error": "frozen", "reason": info.get("reason")}, status_code=503)
     model = req.model or DEFAULT_MODEL
     if model not in MODEL_IDS:
         return JSONResponse({"error": f"unknown model: {model}"}, status_code=400)
@@ -774,6 +778,41 @@ async def chat(req: ChatRequest):
     if model.startswith("q/"):
         return StreamingResponse(stream_q(model[2:], msgs), media_type="text/event-stream")
     return StreamingResponse(stream_omni(model, msgs), media_type="text/event-stream")
+
+
+def _extract_bearer(request: Request) -> str | None:
+    """Pull the raw bearer token from Authorization header. Returns None if absent."""
+    h = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not h or not h.lower().startswith("bearer "):
+        return None
+    return h[7:].strip() or None
+
+
+@app.get("/agent/freeze")
+async def agent_freeze_status():
+    """Public read-only snapshot. Tells callers if /agent is currently disabled."""
+    return agent_freeze.freeze_info()
+
+
+@app.post("/agent/freeze")
+async def agent_freeze_set(request: Request, body: dict | None = None):
+    """Master-token only. Body: {"reason": "..."}"""
+    tok = _extract_bearer(request)
+    if not agent_freeze.is_master_token(tok):
+        return JSONResponse({"error": "master token required"}, status_code=403)
+    reason = ""
+    if isinstance(body, dict):
+        reason = str(body.get("reason") or "")
+    return agent_freeze.freeze(reason)
+
+
+@app.post("/agent/unfreeze")
+async def agent_unfreeze(request: Request):
+    """Master-token only. Removes the freeze flag."""
+    tok = _extract_bearer(request)
+    if not agent_freeze.is_master_token(tok):
+        return JSONResponse({"error": "master token required"}, status_code=403)
+    return agent_freeze.unfreeze()
 
 
 import shutil as _shutil
@@ -857,6 +896,9 @@ _AGENT_SESSIONS: _SessionCache = _SessionCache(_SESSION_CACHE_MAX)
 
 @app.post("/agent")
 async def agent_endpoint(req: AgentRequest, request: Request):
+    if agent_freeze.is_frozen():
+        info = agent_freeze.freeze_info()
+        return JSONResponse({"error": "frozen", "reason": info.get("reason")}, status_code=503)
     if not KIRO_API_KEY:
         return JSONResponse({"error": "KIRO_API_KEY not set"}, status_code=400)
     user_id = agent_auth.current_user_id(request)
