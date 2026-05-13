@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-823-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-858-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
 </p>
@@ -48,7 +48,7 @@ Docker sandboxes.
 | **Key pool & cost caps** | ✅ rotation, ban-lists, forecast | ❌                                   |
 | **Observability**        | ✅ `/agent/health`                | ❌                                   |
 | **Branding & UX**        | RU/EN UI, animated avatar        | bare-bones                           |
-| **Tests / Coverage**     | **823 tests, ~94%**              | varies                               |
+| **Tests / Coverage**     | **858 tests, ~94%**              | varies                               |
 | **LLM provider abstraction** | ✅ pluggable (Q live; OpenRouter shipped) | partial          |
 | **Multi-user (lite)**    | ✅ per-token session isolation    | partial                              |
 | **Telegram frontend**    | ✅ markdown + photo + voice       | varies                               |
@@ -192,14 +192,14 @@ See `.env.example` — every environment variable is documented there.
 ## Tests
 
 ```bash
-make test    # pytest suite (823 tests, ~94% coverage)
+make test    # pytest suite (858 tests, ~94% coverage)
 make smoke   # 19 live HTTP checks against running service
 make all     # both
 ```
 
 ## Status
 
-Production-grade. **823 tests** at ~94% coverage (critic/keys/store all >97%),
+Production-grade. **858 tests** at ~94% coverage (critic/keys/store all >97%),
 CI green, push-to-prod CD active, deployed on `disk-photon.exe.xyz`. LLM
 abstraction complete with **two providers shipped** (Q live, OpenRouter ready);
 multi-user lite + TG whitelist live; Telegram frontend supports markdown + image +
