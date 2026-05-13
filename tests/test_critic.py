@@ -49,6 +49,26 @@ def test_parse_lowercase_block():
     assert v["verdict"] == "BLOCK"
 
 
+def test_parse_block_empty_reason_does_not_crash():
+    """Regression: whitespace-only REASON must not raise IndexError.
+
+    Previously `parse_verdict` did `(...).splitlines()[0]` unconditionally;
+    for a REASON line that is space/tab-only, `strip()` yields `""` whose
+    `splitlines()` is `[]`, and `[0]` crashed the caller (agent_runtime's
+    auto-critic path right before git_commit). The verdict must still be
+    parsed as BLOCK and reason must be the empty string.
+    """
+    cases = [
+        "VERDICT: BLOCK\nREASON: ",            # single trailing space
+        "VERDICT: BLOCK\nREASON:   ",          # multiple trailing spaces
+        "VERDICT: BLOCK\nREASON:\t",           # tab only
+    ]
+    for txt in cases:
+        v = agent_critic.parse_verdict(txt)
+        assert v["verdict"] == "BLOCK", txt
+        assert v["reason"] == "", txt
+
+
 @pytest.mark.asyncio
 async def test_review_diff_empty_short_circuits():
     v = await agent_critic.review_diff("key", "", intent="x")
