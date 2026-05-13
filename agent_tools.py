@@ -451,6 +451,13 @@ def _line_ranges(lines: list[int]) -> str:
     return ",".join(out)
 
 
+def self_status(args: dict[str, Any], cwd: str) -> str:
+    import agent_self
+    import app as _app  # for _PROCESS_START
+
+    return agent_self.status_text(start_ts=getattr(_app, "_PROCESS_START", None))
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     import agent_skills
 
@@ -497,6 +504,7 @@ TOOLS = {
     "memory_add": memory_add,
     "review_changes": review_changes,
     "coverage_status": coverage_status,
+    "self_status": self_status,
 }
 
 

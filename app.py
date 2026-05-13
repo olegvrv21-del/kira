@@ -266,6 +266,14 @@ async def auth_status():
     return {"install": _auth_status, "runtime": agent_auth.snapshot()}
 
 
+@app.get("/agent/self")
+async def agent_self_endpoint():
+    """Self-introspection snapshot. Cheap, no secrets. Safe to expose to UI."""
+    import agent_self
+
+    return agent_self.status(start_ts=_PROCESS_START)
+
+
 @app.get("/agent/health")
 async def agent_health():
     """Aggregate health snapshot.

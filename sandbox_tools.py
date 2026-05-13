@@ -1369,6 +1369,28 @@ def coverage_status(args: dict[str, Any], cwd: str, sid: str) -> str:
     return "\n".join(lines)
 
 
+def self_status(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Read self-introspection snapshot from the host repo (mounted at /host/webchat)."""
+    import os as _os
+    import sys as _sys
+
+    for p in ("/host/webchat", "/workspace"):
+        if p not in _sys.path and _os.path.isdir(p):
+            _sys.path.insert(0, p)
+    import agent_self  # type: ignore
+
+    # PROCESS_START is the *host* process; we don't have it inside the sandbox.
+    # Try to read it from app module if importable, else omit uptime.
+    start_ts = None
+    try:
+        import app as _app  # type: ignore
+
+        start_ts = getattr(_app, "_PROCESS_START", None)
+    except Exception:
+        pass
+    return agent_self.status_text(start_ts=start_ts)
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str, sid: str) -> str:
     import agent_skills
 
@@ -1416,6 +1438,7 @@ TOOLS = {
     "memory_add": memory_add,
     "review_changes": review_changes,
     "coverage_status": coverage_status,
+    "self_status": self_status,
 }
 
 
