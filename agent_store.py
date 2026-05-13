@@ -159,6 +159,7 @@ def record_credits(sid: str, credits_total_for_session: float, owner_id: str | N
             "INSERT INTO sessions(sid, credits, created_at, updated_at, owner_id) VALUES (?,?,?,?,?) "
             "ON CONFLICT(sid) DO UPDATE SET "
             "credits=excluded.credits, "
+            "updated_at=excluded.updated_at, "
             "owner_id=COALESCE(sessions.owner_id, excluded.owner_id)",
             (sid, credits_total_for_session, time.time(), time.time(), owner_id),
         )
