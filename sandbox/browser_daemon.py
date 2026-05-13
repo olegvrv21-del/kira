@@ -147,23 +147,48 @@ async def navigate(req: NavReq):
         }
 
 
+from _eval_wrap import block_wrap as _block_wrap, expression_wrap as _expr_wrap
+
+
 @app.post("/eval")
 async def eval_expr(req: EvalReq):
     async with _lock:
         page: Page = state["page"]
-        # wrap in IIFE so users can pass either an expression or a statement block
-        wrapped = f"(async () => {{ return ({req.expression}); }})()"
-        try:
-            result = await asyncio.wait_for(
-                page.evaluate(wrapped), timeout=req.timeout_ms / 1000)
+        expr = req.expression
+        # Two-stage wrapper:
+        #   1. expression mode: (async () => { return (EXPR); })()
+        #      — works for `1+2`, `document.title`, `({a:1})`, arrow chains.
+        #   2. block mode:     (async () => { EXPR })()
+        #      — fallback for `const x=...; return x;`, `if (...) {...}`,
+        #        and any multi-statement / declaration body. If the script
+        #        has no `return` we patch one onto its last expression-like
+        #        line so the user still gets a value back.
+        # We try mode 1, and on SyntaxError (typically "Unexpected token
+        # \'const\' / \'let\' / \'function\'") fall through to mode 2.
+        attempts = [
+            _expr_wrap(expr),
+            _block_wrap(expr),
+        ]
+        last_err: Exception | None = None
+        for wrapped in attempts:
             try:
-                import json
-                serialized = json.dumps(result, ensure_ascii=False, default=str)
-            except Exception:
-                serialized = repr(result)
-            return {"result": serialized}
-        except Exception as e:
-            return _err(e)
+                result = await asyncio.wait_for(
+                    page.evaluate(wrapped), timeout=req.timeout_ms / 1000)
+                try:
+                    import json
+                    serialized = json.dumps(result, ensure_ascii=False, default=str)
+                except Exception:
+                    serialized = repr(result)
+                return {"result": serialized}
+            except Exception as e:
+                msg = str(e)
+                last_err = e
+                # Only retry on SyntaxError-shaped failures from the JS
+                # parser; everything else (timeout, ReferenceError, etc.)
+                # should surface immediately.
+                if "SyntaxError" not in msg and "Unexpected" not in msg:
+                    break
+        return _err(last_err)
 
 
 @app.post("/screenshot")
