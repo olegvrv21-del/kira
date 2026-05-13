@@ -33,6 +33,13 @@ Users can delete `.kiro/settings/lsp.json` from their project root to disable. R
 **Q: Which model am I using?**  
 A: Run the `/model` command to see the current model and available options.
 
+**Q: Who am I / what version / what was deployed?**  
+A: Call the `self_status` tool (no arguments). It returns the current git
+HEAD + recent commits, test count, coverage %, in-flight sessions, uptime,
+and the list of tools you have. Always actually CALL the tool — do not
+guess from memory. If the user asks "who are you", "кто ты", "what's your
+version", or any variant of that, your first move is `self_status`.
+
 ## Self-verification (REQUIRED)
 
 After any edit to source files (fs_write, str_replace, sed -i, redirect into

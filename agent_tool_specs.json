@@ -1305,7 +1305,7 @@
     {
       "toolSpecification": {
         "name": "self_status",
-        "description": "Return a snapshot of THIS Kira instance: git branch+HEAD+recent commits, test count, latest coverage %, in-flight sessions, host name, uptime, sandbox flags, and the list of tools you have. Call this when the user asks about who you are, what version of yourself you're running, what was deployed recently, or to self-diagnose before suggesting a fix. Takes no arguments.",
+        "description": "ALWAYS call this tool when the user asks who you are, what your version is, what git SHA is deployed, what was committed recently, what your coverage is, or any variant of self-introspection. Returns a snapshot: git branch + HEAD + last 5 commits, test count, coverage %, in-flight session count, host name, uptime, sandbox flags, available tool names. Cheap (~5ms), safe, no secrets. Takes no arguments — invoke as `self_status({})`. Do not guess this information from memory; always call the tool.",
         "inputSchema": {
           "json": {
             "type": "object",
