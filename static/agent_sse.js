@@ -265,17 +265,29 @@ export function createAgentRunner(opts) {
                   // Auto-expand the tool card so the screenshot is visible
                   // without the user having to tap it open.
                   card.classList.add('open');
-                  // Also drop a standalone preview bubble right after the
-                  // card so the screenshot is unmissable in the message flow.
-                  const preview = document.createElement('div');
-                  preview.className = 'agent-screenshot-preview';
-                  preview.style.cssText = 'margin:6px 0;max-width:480px';
+                  // Also emit a real standalone assistant message holding
+                  // the screenshot, so it survives session reload and is
+                  // unmissable even when the tool card is collapsed. The
+                  // bubble lives in the normal message flow with copy/
+                  // markdown semantics; clicking opens full-res in a tab.
+                  const bubble = addMsg('assistant', '', null, { noEdit: true });
+                  bubble.txt.textContent = '';
+                  const link = document.createElement('a');
+                  link.href = src;
+                  link.target = '_blank';
+                  link.rel = 'noopener';
+                  link.style.cssText = 'display:block;max-width:480px';
                   const img2 = document.createElement('img');
                   img2.src = src;
-                  img2.alt = 'screenshot';
-                  img2.style.cssText = 'width:100%;border-radius:10px;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.35)';
-                  preview.appendChild(img2);
-                  card.insertAdjacentElement('afterend', preview);
+                  img2.alt = rel.split('/').pop() || 'screenshot';
+                  img2.title = _lang() === 'ru' ? 'Открыть в новой вкладке' : 'Open in new tab';
+                  img2.style.cssText = 'width:100%;border-radius:10px;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.35);cursor:zoom-in';
+                  link.appendChild(img2);
+                  bubble.txt.appendChild(link);
+                  const cap = document.createElement('div');
+                  cap.style.cssText = 'font-size:11px;color:var(--muted);margin-top:4px';
+                  cap.textContent = `📷 ${img2.alt}`;
+                  bubble.txt.appendChild(cap);
                 }
               }
               if (j.diff) {
