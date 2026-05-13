@@ -268,7 +268,7 @@
         }
       },
       "name": "grep",
-      "description": "Fast text pattern search in files using regex. ALWAYS use this tool instead of 'grep', 'rg', or 'ag' commands in bash. Respects .gitignore.\n\n## Text Discovery Only\nUse grep for literal text/pattern matching: error messages, TODOs, config values, regex patterns.\n\n## For Semantic Code Understanding → Use 'code' tool if available\n- Finding symbol definitions or usages → code tool (search_symbols, goto_definition, find_references)\n- Understanding code structure/relationships → code tool\n- Distinguishing definition vs call vs import → code tool\n\n## Fallback\nIf the 'code' tool is available but returns insufficient symbol info, use grep to discover candidate files/lines, then return to 'code' for precise navigation.\n\nWhen you use this tool, prefer to show the user a small list of representative matches (including file paths and line numbers) instead of only giving a high-level summary."
+      "description": "Fast text pattern search in files using regex. ALWAYS use this tool instead of 'grep', 'rg', or 'ag' commands in bash. Respects .gitignore.\n\n## Text Discovery Only\nUse grep for literal text/pattern matching: error messages, TODOs, config values, regex patterns.\n\n## For Semantic Code Understanding \u2192 Use 'code' tool if available\n- Finding symbol definitions or usages \u2192 code tool (search_symbols, goto_definition, find_references)\n- Understanding code structure/relationships \u2192 code tool\n- Distinguishing definition vs call vs import \u2192 code tool\n\n## Fallback\nIf the 'code' tool is available but returns insufficient symbol info, use grep to discover candidate files/lines, then return to 'code' for precise navigation.\n\nWhen you use this tool, prefer to show the user a small list of representative matches (including file paths and line numbers) instead of only giving a high-level summary."
     }
   },
   {
@@ -325,7 +325,7 @@
         }
       },
       "name": "use_subagent",
-      "description": "⚠️ CRITICAL DELEGATION TOOL ⚠️\n\n🔍 BEFORE attempting ANY task, CHECK if you have the required tools in YOUR current tool list.\n\n❌ If you DON'T have the necessary tools → YOU MUST use this tool to delegate to a subagent that does.\n✅ If you DO have the tools → Handle the task yourself.\n\n## When to Use (MANDATORY scenarios):\n\n1. **MISSING TOOLS**: The user asks you to do something but you don't see the required tool in your available tools list\n   - Example: User asks to read a file, but you don't have 'fs_read' → USE THIS TOOL\n   - Example: User asks to search code, but you don't have 'code' tool → USE THIS TOOL\n   - Example: User asks to run bash command, but you don't have 'execute_bash' → USE THIS TOOL\n\n2. **PARALLEL PROCESSING**: A complex task can be split into independent subtasks that different specialized agents can handle simultaneously\n\n3. **CAPABILITY CHECK**: Use ListAgents command first to see what specialized agents and their toolsets are available\n\n## @prompt References in Queries\n\nYou CAN pass `@prompt-name` references (including arguments) directly in the subagent query field. The system automatically resolves @prompt references before the subagent starts — the prompt content is expanded inline and the subagent receives the fully resolved text. Do NOT refuse to delegate because a query contains `@prompt-name` syntax.\n\nExample: `{\"query\": \"@my-task 'arg1:value1, arg2:value2'\"}` — this is valid and will be resolved.\n\n## How Subagents Are Different:\n- Subagents have DIFFERENT, SPECIALIZED toolsets than you\n- Each subagent may have tools you don't have access to\n- They operate independently with their own context\n- Up to 4 subagents can work in parallel\n\n## Decision Flow:\n```\nUser makes request → Check YOUR tools list → Missing required tool? → USE use_subagent\n                                          → Have required tool? → Handle it yourself\n```\n\n⚡ Remember: Don't apologize about lacking tools - just delegate to a subagent that has them! Also note that subagents that are spawned together could not communicate with each other. If they are to perform tasks that are dependent on each other. Spawn them with a different tool call!"
+      "description": "\u26a0\ufe0f CRITICAL DELEGATION TOOL \u26a0\ufe0f\n\n\ud83d\udd0d BEFORE attempting ANY task, CHECK if you have the required tools in YOUR current tool list.\n\n\u274c If you DON'T have the necessary tools \u2192 YOU MUST use this tool to delegate to a subagent that does.\n\u2705 If you DO have the tools \u2192 Handle the task yourself.\n\n## When to Use (MANDATORY scenarios):\n\n1. **MISSING TOOLS**: The user asks you to do something but you don't see the required tool in your available tools list\n   - Example: User asks to read a file, but you don't have 'fs_read' \u2192 USE THIS TOOL\n   - Example: User asks to search code, but you don't have 'code' tool \u2192 USE THIS TOOL\n   - Example: User asks to run bash command, but you don't have 'execute_bash' \u2192 USE THIS TOOL\n\n2. **PARALLEL PROCESSING**: A complex task can be split into independent subtasks that different specialized agents can handle simultaneously\n\n3. **CAPABILITY CHECK**: Use ListAgents command first to see what specialized agents and their toolsets are available\n\n## @prompt References in Queries\n\nYou CAN pass `@prompt-name` references (including arguments) directly in the subagent query field. The system automatically resolves @prompt references before the subagent starts \u2014 the prompt content is expanded inline and the subagent receives the fully resolved text. Do NOT refuse to delegate because a query contains `@prompt-name` syntax.\n\nExample: `{\"query\": \"@my-task 'arg1:value1, arg2:value2'\"}` \u2014 this is valid and will be resolved.\n\n## How Subagents Are Different:\n- Subagents have DIFFERENT, SPECIALIZED toolsets than you\n- Each subagent may have tools you don't have access to\n- They operate independently with their own context\n- Up to 4 subagents can work in parallel\n\n## Decision Flow:\n```\nUser makes request \u2192 Check YOUR tools list \u2192 Missing required tool? \u2192 USE use_subagent\n                                          \u2192 Have required tool? \u2192 Handle it yourself\n```\n\n\u26a1 Remember: Don't apologize about lacking tools - just delegate to a subagent that has them! Also note that subagents that are spawned together could not communicate with each other. If they are to perform tasks that are dependent on each other. Spawn them with a different tool call!"
     }
   },
   {
@@ -474,7 +474,7 @@
   {
     "toolSpecification": {
       "name": "verify_change",
-      "description": "Validate edits. Use AFTER fs_write or shell edits, and BEFORE telling the user 'done'. Runs: py_compile of given files; HTTP GET of given URLs (expect <400); checks 'absent_in' patterns (must NOT appear), 'present_in' patterns (must appear), and 'shell' commands (must exit 0). Returns header 'VERIFY=OK' or 'VERIFY=FAIL' and per-check lines. If FAIL — fix and re-run.",
+      "description": "Validate edits. Use AFTER fs_write or shell edits, and BEFORE telling the user 'done'. Runs: py_compile of given files; HTTP GET of given URLs (expect <400); checks 'absent_in' patterns (must NOT appear), 'present_in' patterns (must appear), and 'shell' commands (must exit 0). Returns header 'VERIFY=OK' or 'VERIFY=FAIL' and per-check lines. If FAIL \u2014 fix and re-run.",
       "inputSchema": {
         "json": {
           "type": "object",
@@ -545,7 +545,7 @@
   {
     "toolSpecification": {
       "name": "plan",
-      "description": "Maintain a structured TODO list for the current task. ALWAYS call `plan` with op=set at the start of any multi-step request (≥2 actions). Update items as you progress (`op=update` with status=in_progress / done / skipped). Statuses: pending, in_progress, done, skipped. The user sees the list in the UI. Operations: set (replace all items), update (change one item by index), add (append, optionally after index), clear (empty).",
+      "description": "Maintain a structured TODO list for the current task. ALWAYS call `plan` with op=set at the start of any multi-step request (\u22652 actions). Update items as you progress (`op=update` with status=in_progress / done / skipped). Statuses: pending, in_progress, done, skipped. The user sees the list in the UI. Operations: set (replace all items), update (change one item by index), add (append, optionally after index), clear (empty).",
       "inputSchema": {
         "json": {
           "type": "object",
@@ -714,7 +714,7 @@
   {
     "toolSpecification": {
       "name": "output_iframe",
-      "description": "Render an HTML snippet for the user as a sandboxed iframe in the chat. Use to show: charts (Vega-Lite via CDN), SVG diagrams, HTML/CSS demos, interactive widgets. The HTML must be self-contained; external resources via https CDN only. Do NOT use for plain text — write a normal reply instead.",
+      "description": "Render an HTML snippet for the user as a sandboxed iframe in the chat. Use to show: charts (Vega-Lite via CDN), SVG diagrams, HTML/CSS demos, interactive widgets. The HTML must be self-contained; external resources via https CDN only. Do NOT use for plain text \u2014 write a normal reply instead.",
       "inputSchema": {
         "json": {
           "type": "object",
@@ -1008,7 +1008,7 @@
   {
     "toolSpecification": {
       "name": "run_tests",
-      "description": "Detect the test runner (pytest/jest/go) and execute it. Returns a parsed summary 'TESTS=PASS|FAIL ... passed=N failed=N duration=Xs' plus raw tail. Prefer this over execute_bash pytest — the structured header is for follow-up decisions.",
+      "description": "Detect the test runner (pytest/jest/go) and execute it. Returns a parsed summary 'TESTS=PASS|FAIL ... passed=N failed=N duration=Xs' plus raw tail. Prefer this over execute_bash pytest \u2014 the structured header is for follow-up decisions.",
       "inputSchema": {
         "json": {
           "type": "object",
@@ -1278,6 +1278,28 @@
   },
   {
     "toolSpecification": {
+      "name": "propose_improvement",
+      "description": "Save a self-improvement proposal to ~/notebook/proposals/ for Oleg to review. Use AFTER you have evidence of a behavioural pattern worth fixing (e.g. low-scoring recent answers, repeated user corrections). The proposal must be Markdown with: # title, ## Pattern observed, ## Proposed change (diff block), ## Rationale, ## Risk. Nothing is auto-applied; Oleg decides whether to open a PR.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
       "name": "review_changes",
       "description": "Critic agent: a SECOND LLM reviews a diff for obvious problems (secrets committed, syntax errors, removed tests, dangerous shell ops, disabled security). Returns REVIEW=OK or REVIEW=BLOCK with reasons. If `diff` is not provided, defaults to `git diff HEAD` in the current cwd. Call this BEFORE git_commit on non-trivial changes.",
       "inputSchema": {
@@ -1302,61 +1324,100 @@
       }
     }
   },
-    {
-      "toolSpecification": {
-        "name": "prod_observe",
-        "description": "Read-only production observation. ONLY way for you to see the LIVE host (disk-photon) state — your filesystem and shell live inside a sandbox container. Use this when the user asks 'are there errors in the journal?', 'is webchat healthy?', 'how much disk?', 'what was the last commit?', etc. Argument `what` selects the action: 'uptime' (load+memory), 'df' (disk), 'systemctl_status' (with `unit`, default webchat), 'journalctl' (with optional `lines` 1-500 and `grep` substring filter, default 50 lines of webchat), 'git_log' (with `n` 1-50), 'git_diff' (with `ref`, default HEAD~1). Returns JSON {ok, stdout, stderr, returncode, duration_seconds}. No shell, no input interpolation — only whitelisted commands.",
-        "inputSchema": {
-          "json": {
-            "type": "object",
-            "properties": {
-              "what": {"type": "string", "enum": ["uptime", "df", "systemctl_status", "journalctl", "git_log", "git_diff"]},
-              "lines": {"type": "integer"},
-              "grep": {"type": "string"},
-              "unit": {"type": "string"},
-              "n": {"type": "integer"},
-              "ref": {"type": "string"}
+  {
+    "toolSpecification": {
+      "name": "prod_observe",
+      "description": "Read-only production observation. ONLY way for you to see the LIVE host (disk-photon) state \u2014 your filesystem and shell live inside a sandbox container. Use this when the user asks 'are there errors in the journal?', 'is webchat healthy?', 'how much disk?', 'what was the last commit?', etc. Argument `what` selects the action: 'uptime' (load+memory), 'df' (disk), 'systemctl_status' (with `unit`, default webchat), 'journalctl' (with optional `lines` 1-500 and `grep` substring filter, default 50 lines of webchat), 'git_log' (with `n` 1-50), 'git_diff' (with `ref`, default HEAD~1). Returns JSON {ok, stdout, stderr, returncode, duration_seconds}. No shell, no input interpolation \u2014 only whitelisted commands.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "what": {
+              "type": "string",
+              "enum": [
+                "uptime",
+                "df",
+                "systemctl_status",
+                "journalctl",
+                "git_log",
+                "git_diff"
+              ]
             },
-            "required": ["what"]
-          }
-        }
-      }
-    },
-    {
-      "toolSpecification": {
-        "name": "gh_pr_open",
-        "description": "Open a GitHub Pull Request with files you authored. This is THE only way you can change the deployed code — a human must merge the PR before CD ships it. Branch name MUST start with `kira/` (e.g. `kira/fix-typo`, `kira/feat-x`). Provide title (single line, <72 chars), body (markdown, explain WHAT and WHY), and files (dict mapping repo-relative path → full file content; existing files are overwritten, new files are created). Hard limits: at most 20 files, total <256 KiB, files under `.github/workflows/` are rejected (workflow injection guard). Use this when the user accepts a fix and asks to open a PR — do NOT push directly to main and do NOT bundle unrelated changes. Returns {ok, url, branch, base} or {ok:false, error}.",
-        "inputSchema": {
-          "json": {
-            "type": "object",
-            "properties": {
-              "branch": {"type": "string", "description": "must match ^kira/[a-z0-9][a-z0-9._-]{1,60}$"},
-              "title": {"type": "string"},
-              "body": {"type": "string"},
-              "files": {"type": "object", "description": "map of repo-relative path -> file content"},
-              "base": {"type": "string", "description": "target branch, default 'main'"}
+            "lines": {
+              "type": "integer"
             },
-            "required": ["branch", "title", "files"]
-          }
+            "grep": {
+              "type": "string"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "n": {
+              "type": "integer"
+            },
+            "ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "what"
+          ]
         }
       }
-    },
-    {
-      "toolSpecification": {
-        "name": "self_status",
-        "description": "ALWAYS call this tool when the user asks who you are, what your version is, what git SHA is deployed, what was committed recently, what your coverage is, or any variant of self-introspection. Returns a snapshot: git branch + HEAD + last 5 commits, test count, coverage %, in-flight session count, host name, uptime, sandbox flags, available tool names. Cheap (~5ms), safe, no secrets. Takes no arguments — invoke as `self_status({})`. Do not guess this information from memory; always call the tool.",
-        "inputSchema": {
-          "json": {
-            "type": "object",
-            "properties": {},
-            "required": []
-          }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "gh_pr_open",
+      "description": "Open a GitHub Pull Request with files you authored. This is THE only way you can change the deployed code \u2014 a human must merge the PR before CD ships it. Branch name MUST start with `kira/` (e.g. `kira/fix-typo`, `kira/feat-x`). Provide title (single line, <72 chars), body (markdown, explain WHAT and WHY), and files (dict mapping repo-relative path \u2192 full file content; existing files are overwritten, new files are created). Hard limits: at most 20 files, total <256 KiB, files under `.github/workflows/` are rejected (workflow injection guard). Use this when the user accepts a fix and asks to open a PR \u2014 do NOT push directly to main and do NOT bundle unrelated changes. Returns {ok, url, branch, base} or {ok:false, error}.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "string",
+              "description": "must match ^kira/[a-z0-9][a-z0-9._-]{1,60}$"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "files": {
+              "type": "object",
+              "description": "map of repo-relative path -> file content"
+            },
+            "base": {
+              "type": "string",
+              "description": "target branch, default 'main'"
+            }
+          },
+          "required": [
+            "branch",
+            "title",
+            "files"
+          ]
         }
       }
-    },
-    {
-      "toolSpecification": {
-        "name": "coverage_status",
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "self_status",
+      "description": "ALWAYS call this tool when the user asks who you are, what your version is, what git SHA is deployed, what was committed recently, what your coverage is, or any variant of self-introspection. Returns a snapshot: git branch + HEAD + last 5 commits, test count, coverage %, in-flight session count, host name, uptime, sandbox flags, available tool names. Cheap (~5ms), safe, no secrets. Takes no arguments \u2014 invoke as `self_status({})`. Do not guess this information from memory; always call the tool.",
+      "inputSchema": {
+        "json": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        }
+      }
+    }
+  },
+  {
+    "toolSpecification": {
+      "name": "coverage_status",
       "description": "Read the latest pytest coverage report (coverage.json at repo root) and return overall % plus a list of files sorted by lowest coverage first. Use this when planning what tests to write or which file to refactor with caution. Returns ok=false with hint if no report exists yet \u2014 in that case run `make coverage` or `pytest --cov=. --cov-report=json:coverage.json` first. Optional `path` returns line-level detail (missing/excluded lines) for a single file. Optional `limit` truncates the file list (default 20).",
       "inputSchema": {
         "json": {

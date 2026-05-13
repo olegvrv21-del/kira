@@ -833,6 +833,111 @@ async def agent_unfreeze(request: Request):
         return JSONResponse({"error": "master token required"}, status_code=403)
     return agent_freeze.unfreeze()
 
+# ---------- Self-improvement: propose-only mode ----------
+# Kira can be asked to look back at recent answers, score them, and write a
+# Markdown proposal for tweaking her system prompt. The proposal lands in
+# ~/notebook/proposals/ and Oleg decides whether to open a PR. Nothing is
+# auto-applied. Master-token gated because it costs LLM calls.
+import agent_self_improve  # noqa: E402
+
+
+@app.get("/agent/proposals")
+async def proposals_list(request: Request):
+    """List existing improvement proposals. Master-token required."""
+    tok = _extract_bearer(request)
+    if not agent_freeze.is_master_token(tok):
+        return JSONResponse({"error": "master token required"}, status_code=403)
+    return {"proposals": agent_self_improve.list_proposals()}
+
+
+@app.post("/agent/propose_improvement")
+async def proposals_create(request: Request, body: dict | None = None):
+    """Run scoring on recent sessions, then ask LLM to propose a prompt tweak.
+
+    Body: {"n": 10, "threshold": 7.0}  (all optional)
+    Master-token gated.
+    """
+    tok = _extract_bearer(request)
+    if not agent_freeze.is_master_token(tok):
+        return JSONResponse({"error": "master token required"}, status_code=403)
+    body = body or {}
+    n = int(body.get("n") or 10)
+    threshold = float(body.get("threshold") or 7.0)
+    n = max(1, min(50, n))
+
+    # Gather recent user->assistant pairs across recent sessions.
+    sessions = agent_store.list_sessions(limit=20)
+    pairs: list[dict] = []
+    for sess in sessions:
+        sid = sess.get("sid") if isinstance(sess, dict) else None
+        if not sid:
+            continue
+        msgs = agent_store.load_session(sid) or []
+        last_user = None
+        for m in msgs:
+            role = m.get("role")
+            content = m.get("content") or ""
+            if role == "user":
+                last_user = content if isinstance(content, str) else str(content)
+            elif role == "assistant" and last_user:
+                txt = content if isinstance(content, str) else str(content)
+                if txt.strip():
+                    pairs.append({"user": last_user, "assistant": txt})
+                last_user = None
+        if len(pairs) >= n:
+            break
+    pairs = pairs[:n]
+    if not pairs:
+        return {"ok": False, "error": "no recent assistant messages to evaluate"}
+
+    # Score each pair, keep the low scorers.
+    api_key = agent_keys.key_pool.current() or ""
+    scored = []
+    for p in pairs:
+        s = await agent_self_improve.score_answer(
+            api_key, p["user"], p["assistant"]
+        )
+        scored.append({**p, "score": s})
+    weak = [s for s in scored if (s["score"].get("overall") or 0) < threshold]
+    if not weak:
+        return {
+            "ok": True,
+            "saved": None,
+            "reason": "no samples below threshold",
+            "scored_count": len(scored),
+            "threshold": threshold,
+        }
+
+    # Build proposal.
+    try:
+        from pathlib import Path as _P
+        current_prompt = (_P(__file__).parent / "agent_system_prompt.txt").read_text("utf-8")
+    except Exception:
+        current_prompt = ""
+    prop = await agent_self_improve.propose_revision(
+        api_key, weak, current_prompt
+    )
+    md = prop.get("markdown") or ""
+    if not md.strip():
+        return {
+            "ok": False,
+            "error": "proposer returned empty",
+            "raw": prop.get("raw", "")[:300],
+        }
+
+    header = (
+        f"<!-- generated {time.strftime('%Y-%m-%dT%H:%MZ', time.gmtime())} -->\n"
+        f"<!-- scored {len(scored)} samples, {len(weak)} below threshold {threshold} -->\n\n"
+    )
+    saved = agent_self_improve.save_proposal(header + md, slug="prompt-tweak")
+    return {
+        "ok": True,
+        "saved": saved,
+        "scored_count": len(scored),
+        "weak_count": len(weak),
+        "threshold": threshold,
+    }
+
 
 import shutil as _shutil
 

@@ -404,6 +404,28 @@ def memory_add(args: dict[str, Any], cwd: str) -> str:
     return f"MEMORY appended file={info['file']} bytes={info['bytes']} lines={info['lines']}"
 
 
+
+def propose_improvement(args: dict[str, Any], cwd: str) -> str:
+    """Save a self-improvement proposal (Markdown) to ~/notebook/proposals/.
+
+    Args:
+        content: the full Markdown body (required, must include diagnosis and proposed diff).
+        slug:    short slug for the filename (optional).
+
+    Use this AFTER you have evidence (recent low-scoring exchanges, a pattern
+    you noticed) and want Oleg to consider tweaking your system prompt. The
+    proposal lands in the notebook for human review; nothing is auto-applied.
+    """
+    import agent_self_improve
+
+    content = (args.get("content") or "").strip()
+    if not content:
+        raise ValueError("content is required (Markdown body)")
+    slug = (args.get("slug") or "").strip()
+    path = agent_self_improve.save_proposal(content, slug=slug or None)
+    return f"PROPOSAL saved -> {path}. Tell Oleg to read it before any PR."
+
+
 def coverage_status(args: dict[str, Any], cwd: str) -> str:
     import agent_coverage
 
@@ -545,6 +567,7 @@ TOOLS = {
     "verify_change": verify_change,
     "memory_search": memory_search,
     "memory_add": memory_add,
+    "propose_improvement": propose_improvement,
     "review_changes": review_changes,
     "coverage_status": coverage_status,
     "self_status": self_status,
