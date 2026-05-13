@@ -26,6 +26,7 @@ RUN ln -sf /usr/bin/node /usr/local/bin/node
 
 # Copy daemons and entrypoint
 COPY --chmod=755 browser_daemon.py /opt/browser_daemon.py
+COPY --chmod=644 _eval_wrap.py /opt/_eval_wrap.py
 COPY --chmod=755 lsp_daemon.py /opt/lsp_daemon.py
 COPY --chmod=755 entrypoint.sh /opt/entrypoint.sh
 
