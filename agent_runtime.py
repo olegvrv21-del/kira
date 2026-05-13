@@ -837,6 +837,7 @@ async def run_agent(
     # executed ONLY the plan tool and the model now emits zero tools, inject a
     # one-shot nudge and continue the loop instead of returning done.
     last_round_only_plan = False
+    consecutive_plan_only_rounds = 0  # «plan→plan→plan» loop guard
     plan_nudge_budget = 2  # at most two automatic nudges per /agent call
 
     try:
@@ -959,8 +960,15 @@ async def run_agent(
                     r"(?i)(\bI'?ll (?:now |just )?(?:save|create|write|append|run|commit)\b"
                     r"|\blet me (?:save|create|write|append|run|now)\b"
                     r"|\bsaving (?:it|this|the file) (?:now|next)\b"
+                    r"|\b(?:taking|grabbing) (?:a |the )?screenshot\b"
+                    r"|\bcontinuing\b|\bproceeding\b"
                     r"|сохран[яюёе][юте]?\b|создам\b|создаю\b|напишу\b|сейчас\s+сохран"
-                    r"|записываю\b|записать\b|сейчас\s+создам)"
+                    r"|записываю\b|записать\b|сейчас\s+создам"
+                    # 2026-05-13: демо-баг «Cyberpunk wiki» — агент писал
+                    # «продолжаю — делаю скриншот» и обрывал ход без вызова.
+                    r"|делаю\b|сделаю\b|продолжаю\b|открываю\b|открою\b"
+                    r"|читаю\b|прочитаю\b|захожу\b|зайду\b|проверяю\b"
+                    r"|сейчас\s+(?:сделаю|запиш|открою|зайду|прочитаю))"
                 )
                 has_code_block = full_text.count("```") >= 2
                 promised_action = bool(_promise_re.search(full_text)) or has_code_block
@@ -1099,9 +1107,43 @@ async def run_agent(
             messages.extend(tool_results_for_history)
             _sync_history_dict()
 
-            # Track "plan-only" rounds for the Bug 1 nudge above.
+            # Track "plan-only" rounds for the nudge above.
             executed_names = {tc.name for tc in tool_calls_emitted}
             last_round_only_plan = executed_names == {"plan"}
+            if last_round_only_plan:
+                consecutive_plan_only_rounds += 1
+            else:
+                consecutive_plan_only_rounds = 0
+
+            # 2026-05-13 demo bug — plan→plan→plan→… loops bypass the
+            # text-only nudge branch because each round technically *did*
+            # emit a tool call (`plan`). Inject a user-level nudge after the
+            # second consecutive plan-only round so the model is forced to
+            # execute the FIRST step instead of replanning forever. Cheap:
+            # consumes the same nudge budget the text-only branch uses.
+            if (
+                consecutive_plan_only_rounds >= 2
+                and plan_nudge_budget > 0
+                and turn < MAX_TURNS - 1
+            ):
+                plan_nudge_budget -= 1
+                consecutive_plan_only_rounds = 0
+                yield _sse({
+                    "type": "plan_nudge",
+                    "reason": "plan-only loop — forcing action on next turn",
+                })
+                current_user = _M(
+                    role="user",
+                    content=(
+                        "You have called `plan` repeatedly without any other tool "
+                        "call. Stop replanning. Execute the FIRST step from your "
+                        "current plan NOW by calling the matching tool "
+                        "(browser_screenshot, fs_write, execute_bash, mem_remember, "
+                        "etc.). Do not call plan again on this turn."
+                    ),
+                )
+                pending_images_for_provider = None
+                continue
 
             yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn + 1})
 

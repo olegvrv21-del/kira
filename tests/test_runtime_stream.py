@@ -478,3 +478,60 @@ async def test_nudge_when_model_promises_save_without_tool(monkeypatch, tmp_path
     assert nudges, f"expected plan_nudge, got: {[e.get('type') for e in events]}"
     dones = [e for e in events if e.get("type") == "done"]
     assert dones
+
+
+@pytest.mark.asyncio
+async def test_plan_loop_guard_after_two_plan_only_rounds(monkeypatch, tmp_path):
+    """Demo bug 2026-05-13: agent replanned 5x without executing anything
+    on the Cyberpunk-wiki task. The text-only nudge above doesn't fire
+    because each round technically *did* emit a tool call (`plan`).
+    Two consecutive plan-only rounds must trigger a user-level nudge.
+    """
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    import agent_runtime as _ar
+    monkeypatch.setattr(_ar, "_handle_plan", lambda sid, args: ("success", "ok"))
+    monkeypatch.setattr(
+        _ar, "_load_plan",
+        lambda sid: {"items": [{"text": "step1", "status": "in_progress"}]},
+    )
+
+    def _plan_round(tu):
+        return [
+            (
+                "toolUseEvent",
+                {
+                    "toolUseId": tu,
+                    "name": "plan",
+                    "input": json.dumps({"op": "set", "items": ["s"]}),
+                    "stop": True,
+                },
+            ),
+        ]
+
+    fake = _stream(
+        _plan_round("tu1"),          # round 1: plan only
+        _plan_round("tu2"),          # round 2: plan only → triggers guard
+        # round 3: after guard nudge, model finally calls a real tool
+        [
+            (
+                "toolUseEvent",
+                {
+                    "toolUseId": "tu_fs",
+                    "name": "fs_read",
+                    "input": json.dumps({"path": "missing.txt"}),
+                    "stop": True,
+                },
+            ),
+        ],
+        # round 4: short ack, no tool calls (text-only nudge may fire then run out)
+        [("assistantResponseEvent", {"content": "finished", "messageId": "m4"})],
+    )
+    with patch.object(q_client, "stream_q", fake):
+        events = await _collect(ar.run_agent("k", "do thing", session_id="unit_planloop"))
+
+    nudges = [e for e in events if e.get("type") == "plan_nudge"]
+    assert nudges, f"expected plan_nudge after 2 plan-only rounds, got: {[e.get('type') for e in events]}"
+    assert any("plan-only loop" in (n.get("reason") or "") for n in nudges), \
+        f"expected the plan-loop reason, got: {[n.get('reason') for n in nudges]}"
+    dones = [e for e in events if e.get("type") == "done"]
+    assert dones, "no done event after guard"
