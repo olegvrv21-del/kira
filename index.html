@@ -719,6 +719,59 @@
   .skill-body { background: rgba(0,0,0,0.25); padding: 12px; border-radius: 8px;
                 white-space: pre-wrap; font-size: 12.5px; line-height: 1.55; }
   body.theme-light .skill-body { background: rgba(0,0,0,0.04); }
+  /* "Create new" tile — visually distinct from existing skills */
+  .skill-create-row { border-style: dashed !important; border-color: var(--orange) !important; }
+  .skill-create-row:hover { background: rgba(255,138,61,0.06); }
+
+  /* New-skill form */
+  .skill-form { display: flex; flex-direction: column; gap: 14px; }
+  .skill-form .sf-section { display: flex; flex-direction: column; gap: 6px; }
+  .skill-form .sf-label { font-size: 12.5px; font-weight: 600; opacity: .85; }
+  .skill-form .sf-input,
+  .skill-form .sf-textarea {
+    background: rgba(0,0,0,0.25); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; font-size: 13px; font-family: inherit; outline: none;
+    transition: border-color .15s;
+  }
+  .skill-form .sf-textarea { resize: vertical; min-height: 140px; line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", monospace;
+    font-size: 12.5px;
+  }
+  body.theme-light .skill-form .sf-input,
+  body.theme-light .skill-form .sf-textarea { background: rgba(0,0,0,0.03); }
+  .skill-form .sf-input:focus,
+  .skill-form .sf-textarea:focus { border-color: var(--orange); }
+  .skill-form .sf-hint {
+    font-size: 11.5px; line-height: 1.45; color: var(--muted);
+    background: rgba(255,138,61,0.07); padding: 7px 10px; border-radius: 6px;
+    border-left: 2px solid var(--orange);
+  }
+  .skill-form .sf-tips {
+    background: rgba(0,0,0,0.22); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.55;
+  }
+  body.theme-light .skill-form .sf-tips { background: rgba(0,0,0,0.03); }
+  .skill-form .sf-tips-title { font-weight: 600; margin-bottom: 6px; color: var(--orange); }
+  .skill-form .sf-tips ul { margin: 0; padding-left: 18px; }
+  .skill-form .sf-tips li { margin-bottom: 4px; }
+  .skill-form .sf-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .skill-form .sf-actions button {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px;
+    transition: border-color .15s, background .15s;
+  }
+  .skill-form .sf-actions button:hover { border-color: var(--orange); }
+  .skill-form .sf-actions button.primary {
+    background: var(--orange); border-color: var(--orange); color: #1a1a1a; font-weight: 600;
+  }
+  .skill-form .sf-actions button.primary:hover { filter: brightness(1.08); }
+  .skill-form .sf-result {
+    font-size: 12.5px; padding: 6px 0; min-height: 18px;
+  }
+  .skill-form .sf-result.ok { color: #4caf50; }
+  .skill-form .sf-result.error { color: #ff6b6b; }
+
   /* model pin indicator */
   .model-btn.pinned { border-color: var(--orange) !important; }
   .model-btn .pin-mark { color: var(--orange); font-size: 10px; margin-left: 2px; }
