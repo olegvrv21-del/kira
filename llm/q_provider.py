@@ -381,7 +381,13 @@ def messages_to_q_history(messages: list[Message], *, wrap_text: bool = False) -
 
 
 class _ToolAccumulator:
-    """Q streams tool input as JSON fragments; reassemble until `stop=True`."""
+    """Q streams tool input as JSON fragments; reassemble until `stop=True`.
+
+    Quirk: for tools with no arguments (empty input schema), Q never sends a
+    `stop=True` frame — it just emits the name + an empty `input=""` frame and
+    moves on to contextUsageEvent/meteringEvent. To avoid swallowing those
+    tool calls, the caller must `flush_remaining()` at end-of-stream.
+    """
 
     def __init__(self) -> None:
         self.buf: dict[str, dict[str, Any]] = {}
@@ -400,8 +406,28 @@ class _ToolAccumulator:
                 args = json.loads(slot["raw"]) if slot["raw"] else {}
             except Exception as e:
                 args = {"_parse_error": str(e), "_raw": slot["raw"]}
+            self.buf.pop(tid, None)
             return ToolCall(id=tid, name=slot["name"], arguments=args)
         return None
+
+    def flush_remaining(self) -> list[ToolCall]:
+        """Emit any tool calls that never received a stop=True frame.
+
+        Q does this for no-argument tools (empty input). We assume the call is
+        complete once we've seen contextUsageEvent / messageMetadataEvent /
+        stream end.
+        """
+        out: list[ToolCall] = []
+        for tid, slot in list(self.buf.items()):
+            if not slot.get("name"):
+                continue
+            try:
+                args = json.loads(slot["raw"]) if slot["raw"] else {}
+            except Exception as e:
+                args = {"_parse_error": str(e), "_raw": slot["raw"]}
+            out.append(ToolCall(id=tid, name=slot["name"], arguments=args))
+        self.buf.clear()
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +514,9 @@ class QProvider:
                     type="context_usage",
                     meta={"context_pct": float(payload.get("contextUsagePercentage", 0) or 0)},
                 )
+                # also flush no-arg tools here (idempotent — flush_remaining clears the buffer)
+                for tc in acc.flush_remaining():
+                    yield StreamEvent(type="tool_call", tool=tc)
             elif et == "messageMetadataEvent":
                 u = payload.get("usage") or {}
                 if u:
@@ -499,6 +528,10 @@ class QProvider:
                             meta={k: v for k, v in u.items() if k not in ("inputTokens", "outputTokens")},
                         ),
                     )
+        # final safety flush in case Q ended the stream without context/metering
+        # (shouldn't happen, but accumulator must never silently drop tool calls)
+        for tc in acc.flush_remaining():
+            yield StreamEvent(type="tool_call", tool=tc)
         yield StreamEvent(type="done")
 
     async def stream_raw_body(
