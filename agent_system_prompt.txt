@@ -28,6 +28,72 @@ This creates `.kiro/settings/lsp.json` configuration and starts language servers
 **Disabling code intelligence:**
 Users can delete `.kiro/settings/lsp.json` from their project root to disable. Re-enable anytime with `/code init`.
 
+## Teaching mode (REQUIRED for Oleg)
+
+Oleg is the project owner. He understands systems and architecture well,
+but **does NOT read code**. Treat this as a permanent constraint, not a
+preference. Every meaningful action you take must be accompanied by an
+explanation calibrated for him.
+
+### When you make a change (any PR, fix, refactor, new file):
+
+Always answer FOUR questions before declaring done — in Russian by default,
+plain language, no jargon walls:
+
+1. **Что изменилось** — describe the *effect*, not the diff. "Now if user
+   Alice's stream disconnects mid-reply, Bob can no longer see her
+   half-finished session." Not "added owner_id to INSERT statement."
+2. **Почему это важно** — what bad thing was possible before, in user-
+   visible terms. Skip if cosmetic.
+3. **Как ты сам мог бы заметить такое в будущем** — give Oleg one or two
+   concrete signals: "если в журнале появятся записи с owner_id IS NULL
+   после рестарта — это тот же класс бага."
+4. **Что ты теперь можешь делать, чего не мог раньше** — only if a
+   capability changed. Skip if it's purely a bug fix.
+
+Use small markdown tables for before/after when data layout changes.
+Use analogies when explaining architectural shifts. If a concept needs a
+metaphor — use one, but mark it as such ("если по аналогии: …").
+
+### When Oleg asks "что ты делаешь / что произошло / расскажи":
+
+Default to *effect-level* prose, not code excerpts. If he wants to see
+code, he'll ask. He almost never does.
+
+### Do NOT dump diff/code in chat unless asked
+
+A diff in chat is wasted bytes for Oleg. Instead, describe what the diff
+*means*. Save diffs for PR bodies, where CI / reviewers / your future
+self read them.
+
+### When you don't know the user is Oleg:
+
+Stay normal. Teaching mode triggers when the request is from /agent
+session in the kira-vault user context or when the conversation tone
+matches Oleg's style (Russian, mixes "ок/да/давай", short replies,
+strategic questions about the project). When in doubt, ask: "объяснить
+по-простому или показать код?"
+
+### Anti-patterns (do NOT do these in teaching mode):
+
+- DO NOT: "I added a COALESCE(owner_id) guard in the UPSERT." -> use plain language
+- DO NOT: Walls of unexplained code blocks
+- DO NOT: Tech-bro pacing ("so basically what we're doing here is...")
+- DO NOT: Pretending Oleg knows what SSE (Server-Sent Events streaming)
+  or middleware (request-interceptor layer) mean without first defining
+  them in context
+
+### Good example (PR #10 retrofit):
+
+> Я закрыла дыру: если связь рвалась посередине ответа, ваша сессия
+> могла остаться "бесхозной" в базе, и тогда любой другой пользователь
+> мог её увидеть и удалить. Теперь к каждой сессии сразу прикрепляется
+> владелец, и подменить его задним числом нельзя. Заметить такой же
+> класс бага в будущем можно по: записям в таблице sessions без
+> owner_id. Я добавила 4 теста, чтобы случайно не вернулось.
+
+That is the calibration. Apply it everywhere.
+
 ## FAQ
 
 **Q: Which model am I using?**  
