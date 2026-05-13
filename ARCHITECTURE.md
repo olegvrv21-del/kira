@@ -23,7 +23,7 @@ Read this once, then jump to the file you actually need.
       ┌──────────────────────────────────────────────────────┐
       │  Agent core            agent_runtime.py              │
       │   ├─ tool dispatch     agent_tools.py                │
-      │   ├─ sandbox tools     sandbox_tools.py (38 tools)   │
+      │   ├─ sandbox tools     sandbox_tools.py (36 tools)   │
       │   ├─ subagents         q_client.py                   │
       │   ├─ skills            agent_skills.py + skills/*.md │
       │   ├─ hooks             agent_hooks.py + hooks.json   │
@@ -84,7 +84,7 @@ Grouped by purpose. All `/agent/*` require `Authorization: Bearer $KIRA_AUTH_TOK
 
 ---
 
-## 4. The 38 sandbox tools (`sandbox_tools.py`)
+## 4. The 36 sandbox tools (`sandbox_tools.py`)
 
 Kira's hands. Every tool runs inside `sandbox/` with audit logging.
 
@@ -100,6 +100,8 @@ Kira's hands. Every tool runs inside `sandbox/` with audit logging.
 
 **Memory** — `memory_add`, `memory_search`
 
+**Self-introspection & improvement** — `self_status` (git HEAD, recent commits, test count, coverage, in-flight, uptime, tool list), `prod_observe` (whitelisted read-only host commands: uptime/df/systemctl/journalctl/git_log/git_diff), `gh_pr_open` (open a PR on `kira/*` branch with workflow-injection guard)
+
 **Browser automation** (via `browser_daemon.py` + Playwright) — `browser_navigate`, `browser_click`, `browser_type`, `browser_text`, `browser_eval`, `browser_screenshot`, `browser_console_logs`, `browser_network`, `browser_accessibility`, `browser_emulate`, `output_iframe`
 
 Specs live in `agent_tool_specs.json` (OpenAI/Anthropic function-calling shape).
@@ -112,7 +114,7 @@ Specs live in `agent_tool_specs.json` (OpenAI/Anthropic function-calling shape).
 |----------------------------|------|-----------------------------------------------------------------|
 | `app.py`                   | 1120 | FastAPI routes, SSE streaming, auth, request validation          |
 | `agent_runtime.py`         | 1053 | Agent loop, tool-call dispatch, streaming protocol, subagents    |
-| `sandbox_tools.py`         | 1430 | Implementation of all 38 tools                                   |
+| `sandbox_tools.py`         | 1430 | Implementation of all 36 tools                                   |
 | `agent_tools.py`           |  515 | Tool registry, schema validation, audit log                      |
 | `agent_memory.py`          |  364 | Long-term memory: SQLite + optional embeddings (`memory_*`)      |
 | `agent_store.py`           |  562 | Session/transcript persistence (`agent_sessions.db`)             |
@@ -180,7 +182,7 @@ Production lives on `disk-photon.exe.xyz` as `webchat.service`
 
 ## 9. Tests (`tests/`)
 
-823 tests, ~94% coverage (critic 98%, keys 98%, store 98%). Naming mirrors modules:
+858 tests, ~94% coverage (critic 98%, keys 98%, store 98%). Naming mirrors modules:
 `test_<module>.py` covers `<module>.py`. Highlights:
 
 - `test_app_*.py` — HTTP layer (endpoints, streaming, helpers)
@@ -242,6 +244,8 @@ Be honest about what's still rough:
 | 6 | ~~TG bot: no markdown, no chunking, no voice/file input~~ | **Done.** Markdown parse_mode with fallback to plain on 400; `split_into_chunks` (3900-char limit, break on `\n\n` > `\n` > space, balance code fences across chunks). Photo upload → base64 → `/agent images:[]` (magic-byte format detection, 8MB cap). Voice transcription pluggable: `KIRA_TG_WHISPER=faster-whisper` (local CPU tiny ~75MB) or `groq` (Whisper-large-v3-turbo); off by default, transcript echoed in italics before processing. |
 | 7 | Multi-user TG bot derived-token whitelist | **Done.** `KIRA_TG_ALLOWED_USERS` env (comma-separated TG user IDs) gates `agent_auth.derive_tg_token`; bogus IDs → 401. Configured on prod via `webchat.service.d/override.conf`. |
 | 8 | Second LLM backend / BYOK | **Done — provider shipped, not yet activated on prod.** `llm/openrouter_provider.py` (381 LOC, commit `9c1849a`, 18 tests, registered in `llm/__init__.py`). Activate via `KIRA_LLM_PROVIDER=openrouter` + `OPENROUTER_API_KEY` — same canonical Message/ToolCall/StreamEvent contract, no runtime changes. |
+| 10 | Kira self-introspection & self-improvement pipeline | **Done (2026-05-13).** Three tiers landed in a single day. Tier 1 (`agent_self.py`, commit `b3b8fd0`): `self_status` tool exposes git HEAD + last 5 commits + test count + coverage + in-flight sessions + uptime + tools list to the LLM and to operators via `GET /agent/self`. Tier 2 (`agent_prod.py` + `agent_pr.py`, commits `8d065f9`/`7e53b5b`): `prod_observe` whitelists 6 read-only host commands (uptime, df, systemctl, journalctl with grep, git_log, git_diff) — no shell, regex-validated args, 10s timeout, 64KB cap — and `gh_pr_open` opens PRs on `kira/*` branches with workflow-injection guard (deny `.github/workflows/`), path-traversal guard, 20-file / 256 KiB caps. Tier 3 (`.github/workflows/kira-auto-merge.yml`, commit `b363030` + cascade fix `9ff4786`): on `pull_request: labeled` with `kira-auto-merge` AND CI all-green AND `kira/*` branch AND base=`main`, the workflow squash-merges via `gh pr merge --squash --delete-branch --admin`; `deploy.yml` listens on `workflow_run: ["Kira PR auto-merge"]` so the prod deploy cascades despite GH's GITHUB_TOKEN anti-recursion. End-to-end loop verified live: PR #5 (`1a5dd5e`) and #6 (`57c8550`) — Kira opened, human applied one label, CI ran, auto-merged in ~5s, deployed in ~50s. Suite 823 → 868 (+45). |
+| 11 | Hidden Q tool-call bug (no-arg tools silently dropped) | **Done (commit `1d525ed`).** `_ToolAccumulator` in `llm/q_provider.py` only emitted a `ToolCall` on `stop=True`, but for tools with empty input schema Q emits two `toolUseEvent` frames (name + empty input) and never sends `stop`. All no-arg tools were silently dropped — caller saw "empty turn" and exited. Added `flush_remaining()` called on `contextUsageEvent` (Q's end-of-turn) and on stream `done`. Idempotent. Regression-tested with 3 cases covering all stop scenarios. |
 | 9 | Off-VM disaster recovery | **Done.** Private `kira-vault` GitHub repo, git-crypt encrypted (`etc/**`, `notebook/SECRETS.md`, …, plus `*.gpg`). Daily systemd timer `kira-vault-sync.timer` → `sync.sh` collects configs (sudoers-whitelisted `cat`) + notebook, commits, pushes. `RESTORE.md` documents the bare-metal drill. |
 
 See `~/notebook/TODO.md` on the prod VM for the live work queue.
