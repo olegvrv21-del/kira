@@ -351,7 +351,7 @@ installFetchInterceptor();
     navItems.forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.dataset.nav;
-        if (name === 'chat' || name === 'dashboard' || name === 'agents' || name === 'models' || name === 'actions') {
+        if (name === 'chat' || name === 'dashboard' || name === 'agents' || name === 'models' || name === 'actions' || name === 'metrics') {
           setNav(name);
           return;
         }
