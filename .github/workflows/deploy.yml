@@ -3,6 +3,13 @@ name: Deploy to prod
 on:
   push:
     branches: [main]
+  # When a Kira PR is auto-merged, GitHub Actions intentionally does NOT
+  # cascade push-triggered workflows fired via GITHUB_TOKEN (anti-loop).
+  # Hook into the auto-merge workflow's completion so the prod deploy still
+  # runs on those merges. The job below filters to successful runs on main.
+  workflow_run:
+    workflows: ["Kira PR auto-merge"]
+    types: [completed]
   workflow_dispatch: {}
 
 concurrency:
@@ -14,6 +21,14 @@ jobs:
     name: rsync + restart
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Only deploy on direct pushes, workflow_dispatch, or a SUCCESSFUL
+    # Kira auto-merge run that landed on main. Avoid double-runs.
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     # Gate on the test job in ci.yml: deploy only runs if CI is green for the
     # same SHA. workflow_run would be cleaner, but push-triggered deploys with
     # a needs-style guard via gh API is overkill. Keep it simple: if you push
