@@ -342,7 +342,8 @@
     .brand-mark { animation: none; }
   }
   @media (max-width: 768px) { .brand-mark { width: 24px; height: 24px; } }
-  .topbar .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-weight: 500; }
+  .topbar .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; }
+  .topbar #agent-budget { flex: 0 0 auto; max-width: none; }
   .lang-toggle {
     display: inline-flex; align-items: center;
     background: rgba(255,255,255,0.03);
@@ -416,7 +417,7 @@
   .tool-card.error   { border-color: rgba(255,107,107,0.4); background: rgba(255,107,107,0.07); }
   .tool-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
   .tool-name { color: var(--orange); font-weight: 600; }
-  .tool-summary { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-summary { color: var(--muted); flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: break-all; }
   .iframe-msg { padding: 6px 12px; }
   .iframe-head { font-size: 11px; color: var(--muted); letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 6px; }
   .diff-wrap { margin-top: 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; overflow: hidden; }
@@ -721,6 +722,19 @@
   /* model pin indicator */
   .model-btn.pinned { border-color: var(--orange) !important; }
   .model-btn .pin-mark { color: var(--orange); font-size: 10px; margin-left: 2px; }
+
+  /* === mobile overrides (placed after base rules so cascade wins) === */
+  @media (max-width: 720px) {
+    .msg { max-width: 94%; }
+    .tool-card { max-width: 94%; }
+    #messages { padding: 0 10px; gap: 12px; }
+    .tool-summary { white-space: normal; word-break: break-word; overflow-wrap: anywhere; text-overflow: clip; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .topbar h1 { display: none; }
+    .topbar { gap: 8px; padding: 12px 12px; }
+    .topbar .meta { max-width: 100%; flex: 1 1 0; }
+    .lang-toggle { margin-left: 4px; }
+    textarea { line-height: 1.5; }
+  }
 </style>
 </head>
 <body>
