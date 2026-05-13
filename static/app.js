@@ -551,7 +551,11 @@ installFetchInterceptor();
             try {
               const j = JSON.parse(data);
               if (j.error) {
-                asst.txt.textContent = `${t('error_prefix')}: ` + (typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+                let msg = (typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+                // Upstream 4xx/5xx bodies (e.g. Q ValidationException) ride on
+                // `j.body` — surface them verbatim so failures stop being blind.
+                if (j.body) msg += '\n\n' + (typeof j.body === 'string' ? j.body : JSON.stringify(j.body, null, 2));
+                asst.txt.textContent = `${t('error_prefix')}: ` + msg;
                 asst.wrap.classList.add('error');
                 continue;
               }

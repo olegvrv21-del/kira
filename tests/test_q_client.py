@@ -306,3 +306,33 @@ async def test_stream_q_cooldown_emits_throttle_first(monkeypatch):
     events = [et async for et, _ in q_client.stream_q("k", {})]
     assert events[0] == "_throttle"
     assert events[-1] == "e"
+
+
+@pytest.mark.asyncio
+async def test_stream_q_400_raises_qhttperror_with_full_body(monkeypatch):
+    # Motivating case: Tokyo-card demo bug. A Q 400 ValidationException must
+    # surface the *full* upstream body via QHttpError.body so the SSE pipeline
+    # can emit it to the user instead of dying silently.
+    payload = b'{"__type":"ValidationException","message":"Tokyo card: invalid imageBytes"}'
+    resps = [_FakeResp(400, body=payload)]
+    monkeypatch.setattr(q_client.httpx, "AsyncClient", _mk_client(resps))
+    with pytest.raises(q_client.QHttpError) as ei:
+        async for _ in q_client.stream_q("k", {}):
+            pass
+    assert ei.value.status == 400
+    assert "ValidationException" in ei.value.body
+    assert "Tokyo card" in ei.value.body
+    # Back-compat: still subclasses RuntimeError so existing handlers work.
+    assert isinstance(ei.value, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_stream_q_500_raises_qhttperror_after_retries(monkeypatch):
+    monkeypatch.setattr(q_client, "_MAX_RETRIES", 1)
+    resps = [_FakeResp(503, body=b"backend down") for _ in range(3)]
+    monkeypatch.setattr(q_client.httpx, "AsyncClient", _mk_client(resps))
+    with pytest.raises(q_client.QHttpError) as ei:
+        async for _ in q_client.stream_q("k", {}):
+            pass
+    assert ei.value.status == 503
+    assert ei.value.body == "backend down"

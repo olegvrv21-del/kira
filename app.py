@@ -642,8 +642,18 @@ async def stream_q(model_id: str, msgs: list):
         async with httpx.AsyncClient(timeout=300) as cx:
             async with cx.stream("POST", KIRO_Q_URL, headers=headers, json=body) as resp:
                 if resp.status_code >= 400:
-                    err = (await resp.aread()).decode("utf-8", "replace")[:600]
-                    yield _sse({"error": f"q {resp.status_code}: {err}"})
+                    err = (await resp.aread()).decode("utf-8", "replace")
+                    # Surface the *full* upstream body so blind 400s (e.g.
+                    # ValidationException) reach the user/logs instead of
+                    # dying silently. Cap is generous; the JSON typically
+                    # holds a single `message` field.
+                    yield _sse(
+                        {
+                            "error": f"q {resp.status_code}: {err[:600]}",
+                            "status": resp.status_code,
+                            "body": err[:4000],
+                        }
+                    )
                     return
                 buf = bytearray()
                 async for chunk in resp.aiter_bytes():

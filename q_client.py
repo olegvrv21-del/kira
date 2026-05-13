@@ -28,6 +28,25 @@ from agent_keys import key_pool
 
 Q_URL = "https://q.us-east-1.amazonaws.com/?origin=KIRO_CLI"
 
+
+class QHttpError(RuntimeError):
+    """Upstream Q returned an HTTP error.
+
+    Carries the *full* response body (not the 400-char preview embedded in
+    ``str(self)``) so callers can surface the real ValidationException to the
+    user / logs instead of failing silently. Demo motivator: a Tokyo-card 400
+    that died without UI feedback.
+    """
+
+    def __init__(self, status: int, body: str, *, note: str = "") -> None:
+        self.status = int(status)
+        self.body = body or ""
+        prefix = f"q {self.status}"
+        if note:
+            prefix = f"{prefix} {note}"
+        super().__init__(f"{prefix}: {self.body[:400]}")
+
+
 _CONCURRENCY = int(os.environ.get("KIRA_Q_CONCURRENCY", "3"))
 _MAX_RETRIES = int(os.environ.get("KIRA_Q_MAX_RETRIES", "6"))
 _BASE_DELAY = float(os.environ.get("KIRA_Q_BASE_DELAY", "1.5"))  # seconds
@@ -137,10 +156,10 @@ async def stream_q(
                                 api_key = new_key
                                 attempt += 1
                                 if attempt > _MAX_RETRIES:
-                                    raise RuntimeError(f"q {r.status_code} after key rotation: {err_body[:300]}")
+                                    raise QHttpError(r.status_code, err_body, note="after key rotation")
                                 continue
                             # No fallback or same key returned — surface error.
-                            raise RuntimeError(f"q {r.status_code}: {err_body[:400]}")
+                            raise QHttpError(r.status_code, err_body)
                         # Decide if this status is retriable.
                         retriable = r.status_code in (429, 500, 502, 503, 504)
                         err: str | None = None
@@ -155,13 +174,13 @@ async def stream_q(
                             ):
                                 retriable = True
                             else:
-                                raise RuntimeError(f"q 400: {err[:400]}")
+                                raise QHttpError(400, err)
                         if retriable:
                             if err is None:
                                 err = (await r.aread()).decode("utf-8", "replace")
                             attempt += 1
                             if attempt > _MAX_RETRIES:
-                                raise RuntimeError(f"q {r.status_code} after {attempt} retries: {err[:300]}")
+                                raise QHttpError(r.status_code, err, note=f"after {attempt} retries")
                             sleep = min(_MAX_DELAY, _BASE_DELAY * (2 ** (attempt - 1))) * (0.7 + 0.6 * random.random())
                             # arm cooldown for sibling calls
                             _COOLDOWN_UNTIL[api_key] = max(_COOLDOWN_UNTIL.get(api_key, 0), loop.time() + sleep)
@@ -177,7 +196,7 @@ async def stream_q(
                             continue
                         if r.status_code >= 400:
                             err = (await r.aread()).decode("utf-8", "replace")
-                            raise RuntimeError(f"q {r.status_code}: {err[:400]}")
+                            raise QHttpError(r.status_code, err)
                         # success: drain frames
                         buf = bytearray()
                         async for chunk in r.aiter_bytes():

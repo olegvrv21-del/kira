@@ -908,7 +908,20 @@ async def run_agent(
                 # already in `messages` as role='tool' entries — keep them so
                 # the next request doesn't see orphan tool_uses.
                 _sync_history_dict()
-                yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
+                err_evt: dict = {
+                    "type": "error",
+                    "message": f"{type(e).__name__}: {e}",
+                }
+                # If this is a QHttpError, surface the full upstream body so
+                # ValidationException-style 400s aren't blind (Tokyo-card demo
+                # bug). The frontend renders `body` as a code block when set.
+                status = getattr(e, "status", None)
+                body = getattr(e, "body", None)
+                if status is not None:
+                    err_evt["status"] = status
+                if body:
+                    err_evt["body"] = body[:4000]
+                yield _sse(err_evt)
                 return
 
             pending_images_for_provider = None  # one-shot per turn

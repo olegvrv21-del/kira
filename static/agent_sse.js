@@ -297,7 +297,12 @@ export function createAgentRunner(opts) {
             messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
           }
           else if (j.type === 'error') {
-            addMsg('assistant', `${_t('error_prefix')}: ${j.message}`, null, { error: true });
+            // Upstream HTTP errors (e.g. Q 400 ValidationException) ride on
+            // `j.body` — append it verbatim so failures don't go silent.
+            let msg = j.message || '';
+            if (j.status) msg = `[HTTP ${j.status}] ${msg}`;
+            if (j.body) msg += '\n\n' + (typeof j.body === 'string' ? j.body : JSON.stringify(j.body, null, 2));
+            addMsg('assistant', `${_t('error_prefix')}: ${msg}`, null, { error: true });
           }
           else if (j.type === 'cancelled') {
             const div = document.createElement('div');
