@@ -1339,6 +1339,21 @@ def memory_add(args: dict[str, Any], cwd: str, sid: str) -> str:
     return f"MEMORY appended file={info['file']} bytes={info['bytes']} lines={info['lines']}"
 
 
+
+def propose_improvement(args: dict[str, Any], cwd: str, sid: str) -> str:
+    """Save a self-improvement proposal to notebook/proposals/ for Oleg to review."""
+    # Set notebook dir to the sandbox-mounted /host/notebook if available.
+    if os.path.isdir("/host/notebook"):
+        os.environ.setdefault("KIRA_NOTEBOOK_DIR", "/host/notebook")
+    import agent_self_improve  # reuses host module path; package is mounted read-only
+    content = (args.get("content") or "").strip()
+    if not content:
+        raise ValueError("content is required (Markdown body)")
+    slug = (args.get("slug") or "").strip()
+    path = agent_self_improve.save_proposal(content, slug=slug or None)
+    return f"PROPOSAL saved -> {path}. Tell Oleg to read it before any PR."
+
+
 def coverage_status(args: dict[str, Any], cwd: str, sid: str) -> str:
     """Read coverage.json from the host repo (we always mount it at /host/webchat)."""
     import agent_coverage
@@ -1450,6 +1465,7 @@ TOOLS = {
     "diagnostics": diagnostics,
     "memory_search": memory_search,
     "memory_add": memory_add,
+    "propose_improvement": propose_improvement,
     "review_changes": review_changes,
     "coverage_status": coverage_status,
     "self_status": self_status,
