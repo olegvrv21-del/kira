@@ -95,7 +95,7 @@ installFetchInterceptor();
       if (!document.body.classList.contains('drawer-open')) return;
       if (window.innerWidth > 720) return;
       const drawer = document.getElementById('drawer');
-      if (drawer.contains(e.target) || e.target === menuBtn) return;
+      if (drawer.contains(e.target) || menuBtn.contains(e.target)) return;
       closeDrawer();
     });
     if (localStorage.getItem(LS_DRAWER) !== '0' && window.innerWidth > 720) openDrawer();
