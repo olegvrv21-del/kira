@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+
+import agent_freeze
 import re
 import platform
 import struct
@@ -768,6 +770,13 @@ async def run_agent(
     effective_max_turns = MAX_TURNS
     if max_turns is not None and max_turns > 0:
         effective_max_turns = min(int(max_turns), MAX_TURNS_HARD)
+    # Kill-switch: if the freeze flag is set, refuse before allocating workspace
+    # or touching the LLM. Emit a single SSE error frame + done.
+    if agent_freeze.is_frozen():
+        yield _sse({"type": "meta", "session_id": session_id, "model": model})
+        yield _sse(agent_freeze.reason_for_sse())
+        yield _sse({"type": "done"})
+        return
     cwd_path = (WORKSPACES / session_id).resolve()
     if not str(cwd_path).startswith(str(WORKSPACES.resolve()) + os.sep):
         raise ValueError("invalid session_id")
