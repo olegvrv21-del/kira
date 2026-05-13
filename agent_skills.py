@@ -73,6 +73,47 @@ def load_skill(name: str) -> str | None:
     return None
 
 
+# Strict slug for filename / skill name. Lowercase letters, digits, dashes.
+_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+
+
+def create_skill(name: str, description: str, body: str) -> dict:
+    """Create a new skill file at SKILLS_DIR/<name>.md.
+
+    Returns {"ok": True, "file": "<path>"} on success, or
+    {"ok": False, "error": "<reason>"} on validation failure / collision.
+
+    Constraints:
+    - name: lowercase letters/digits/dashes, 2-40 chars, starts with a letter
+    - description: 1-300 chars, single line (newlines stripped)
+    - body: required, max 20 KiB
+    - refuses to overwrite an existing file
+    """
+    import re as _re
+    name = (name or "").strip().lower()
+    description = (description or "").strip()
+    body = body or ""
+
+    if not _NAME_RE.match(name):
+        return {"ok": False, "error": "name must be 2-40 chars: lowercase letters, digits, dashes; start with a letter"}
+    description = _re.sub(r"\s+", " ", description)[:300]
+    if not description:
+        return {"ok": False, "error": "description is required (1-300 chars)"}
+    if not body.strip():
+        return {"ok": False, "error": "body is required"}
+    if len(body.encode("utf-8")) > 20 * 1024:
+        return {"ok": False, "error": "body too large (>20 KiB)"}
+
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    target = SKILLS_DIR / f"{name}.md"
+    if target.exists():
+        return {"ok": False, "error": f"skill '{name}' already exists"}
+
+    front = f"---\nname: {name}\ndescription: {description}\n---\n\n"
+    target.write_text(front + body.strip() + "\n", encoding="utf-8")
+    return {"ok": True, "file": target.name}
+
+
 def render_skills_section() -> str:
     """Build the <available_skills> block injected into the system prompt."""
     skills = list_skills()

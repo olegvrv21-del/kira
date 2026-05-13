@@ -91,7 +91,10 @@ def _build_system_prompt() -> str:
     )
 
 
-SYSTEM_PROMPT = _build_system_prompt()
+# NOTE: deliberately NOT a module-level cached snapshot. New skills created
+# via POST /skills must take effect immediately for the next /agent call,
+# not on next webchat restart. _build_system_prompt() reads skills/*.md
+# each call (~15 file reads, sub-millisecond), so this is cheap.
 WORKSPACES = ROOT / "workspaces"
 WORKSPACES.mkdir(exist_ok=True)
 
@@ -651,7 +654,7 @@ async def _run_subagent_silent(
     # CONTEXT ENTRY wrapping the old _user_msg used so the model sees the
     # exact same prompt format.
     messages: list[Message] = [
-        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="system", content=_build_system_prompt()),
         Message(role="user", content=_wrap_user_text(sub_prompt)),
     ]
     # Subagent tools (no use_subagent recursion) in canonical shape.
@@ -806,7 +809,7 @@ async def run_agent(
     # Build canonical message list from caller's Q-dict history.
     messages: list = q_history_to_messages(history) if history else []
     if not messages:
-        messages.append(_M(role="system", content=SYSTEM_PROMPT))
+        messages.append(_M(role="system", content=_build_system_prompt()))
 
     # Helper: keep the caller-visible Q-dict history in sync with `messages`.
     # We rewrite it in place so cached references (app.py's _AGENT_SESSIONS)

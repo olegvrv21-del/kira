@@ -466,6 +466,25 @@ async def skill_get(name: str):
     return {"name": name, "body": body}
 
 
+@app.post("/skills")
+async def skill_create(body: dict):
+    """Create a new skill file from the web UI.
+
+    Body: {"name": "...", "description": "...", "body": "..."}
+    Returns 200 {"ok": true, "file": "..."} or 400 {"ok": false, "error": "..."}.
+    """
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "invalid body"}, status_code=400)
+    res = agent_skills.create_skill(
+        name=str(body.get("name") or ""),
+        description=str(body.get("description") or ""),
+        body=str(body.get("body") or ""),
+    )
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    return res
+
+
 @app.get("/agent/plan/{sid}")
 async def agent_plan_get(sid: str, request: Request):
     uid = agent_auth.current_user_id(request)
