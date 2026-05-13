@@ -146,6 +146,8 @@ def open_pr(
                 title,
                 "--body",
                 body or "_opened by Kira agent_",
+                "--label",
+                "kira-authored",
             ],
             timeout=30,
         )

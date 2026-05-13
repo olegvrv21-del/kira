@@ -1,0 +1,80 @@
+name: Kira PR auto-merge
+
+# Squash-merges a PR opened by Kira (branch starts with `kira/`) once:
+#   - a human added the `kira-auto-merge` label (gate against runaway agent), AND
+#   - CI workflow finished and all required checks are green for the PR head.
+#
+# This is the Tier-3 trust step from JOURNAL 2026-05-13: Kira authors,
+# CI validates, a human flips one label to approve, and the merge happens
+# automatically. CD's existing push-to-main trigger then ships the change.
+
+on:
+  # Trigger when a Kira PR gets the auto-merge label.
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+  # Re-evaluate when CI finishes.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+jobs:
+  squash-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Resolve PR(s) to consider
+        id: prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "numbers=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_run: find PRs from the same head SHA
+            head_sha='${{ github.event.workflow_run.head_sha }}'
+            mapfile -t nums < <(gh pr list --repo "${{ github.repository }}" \
+                --state open --json number,headRefOid,headRefName \
+                -q ".[] | select(.headRefOid==\"$head_sha\") | .number")
+            echo "numbers=$(IFS=,; echo "${nums[*]}")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Evaluate and squash-merge eligible PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          nums="${{ steps.prs.outputs.numbers }}"
+          [ -z "$nums" ] && { echo "no PRs to consider"; exit 0; }
+          IFS=',' read -ra arr <<< "$nums"
+          for n in "${arr[@]}"; do
+            [ -z "$n" ] && continue
+            echo "::group::PR #$n"
+            data=$(gh pr view "$n" --repo "${{ github.repository }}" \
+              --json headRefName,labels,state,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName)
+            branch=$(jq -r '.headRefName' <<<"$data")
+            base=$(jq -r '.baseRefName' <<<"$data")
+            state=$(jq -r '.state' <<<"$data")
+            draft=$(jq -r '.isDraft' <<<"$data")
+            has_label=$(jq -r '.labels|map(.name)|index("kira-auto-merge")' <<<"$data")
+            mergeable=$(jq -r '.mergeable' <<<"$data")
+            mss=$(jq -r '.mergeStateStatus' <<<"$data")
+            ci_pass=$(jq -r '[.statusCheckRollup[] | select(.workflowName=="CI") | .conclusion] | all(. == "SUCCESS")' <<<"$data")
+
+            echo "branch=$branch base=$base state=$state draft=$draft label=$has_label mergeable=$mergeable mss=$mss ci_pass=$ci_pass"
+
+            if [ "$state" != "OPEN" ];               then echo "  skip: not OPEN"; continue; fi
+            if [ "$draft" = "true" ];                then echo "  skip: draft"; continue; fi
+            if [ "$has_label" = "null" ];            then echo "  skip: missing kira-auto-merge label"; continue; fi
+            case "$branch" in kira/*) ;; *)          echo "  skip: branch $branch not kira/*"; continue ;; esac
+            if [ "$base" != "main" ];                then echo "  skip: base=$base not main"; continue; fi
+            if [ "$mergeable" != "MERGEABLE" ];      then echo "  skip: mergeable=$mergeable"; continue; fi
+            if [ "$ci_pass" != "true" ];             then echo "  skip: CI not all green"; continue; fi
+
+            echo "  → squash-merging"
+            gh pr merge "$n" --repo "${{ github.repository }}" --squash --delete-branch --admin
+            echo "::endgroup::"
+          done

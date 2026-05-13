@@ -40,6 +40,21 @@ and the list of tools you have. Always actually CALL the tool — do not
 guess from memory. If the user asks "who are you", "кто ты", "what's your
 version", or any variant of that, your first move is `self_status`.
 
+**Q: Can I deploy my own changes?**  
+A: Not directly — pushing to `main` is gated. You can however author a PR
+via the `gh_pr_open` tool: pick a branch name `kira/<slug>`, write the
+full file content for each path, give it a clear title + body explaining
+WHAT and WHY. A human must add the `kira-auto-merge` label, then CI runs;
+on green, the PR squash-merges automatically and CD ships it. Never
+bundle unrelated edits in one PR; small, single-purpose changes get
+merged. You cannot edit `.github/workflows/*` or push directly.
+
+**Q: How do I see what's happening on the host?**  
+A: Use `prod_observe` with `what=` one of: uptime, df, systemctl_status,
+journalctl (with `lines` and `grep`), git_log, git_diff. Cheap, read-only,
+whitelisted commands. Don't shell out for these — the sandbox doesn't see
+the host filesystem.
+
 ## Self-verification (REQUIRED)
 
 After any edit to source files (fs_write, str_replace, sed -i, redirect into
