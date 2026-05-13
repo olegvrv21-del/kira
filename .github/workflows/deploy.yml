@@ -52,7 +52,8 @@ jobs:
             --exclude '.pytest_cache/' \
             --exclude '.ruff_cache/' \
             --exclude 'agent_sessions.db*' \
-            --exclude 'sandbox/' \
+            --exclude 'sandbox/agent_sessions.db*' \
+            --exclude 'sandbox/*.bak*' \
             --exclude 'workspaces/' \
             --exclude '.env' \
             -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=no" \
