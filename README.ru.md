@@ -22,7 +22,7 @@
 <p align="center">
   <a href="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml"><img src="https://github.com/olegvrv21-del/kira/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/coverage-94%25-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-823-blue" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-858-blue" alt="tests" />
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="python" />
 </p>
 
@@ -121,7 +121,7 @@ index.html            # frontend
 q_client.py           # Kiro Q API client
 ops/                  # systemd units, backup.sh
 skills/               # markdown playbooks
-tests/                # 823 pytest + smoke script
+tests/                # 858 pytest + smoke script
 ```
 
 ## Quick start
@@ -168,14 +168,14 @@ docker build -t kira-sandbox:latest sandbox/
 ## Tests
 
 ```bash
-make test    # 823 pytest, ~94% coverage
+make test    # 858 pytest, ~94% coverage
 make smoke   # 19 live HTTP-проверок
 make all     # both
 ```
 
 ## Status
 
-Production-grade. **823 тестов** при ~94% покрытии (critic/keys/store все >97%),
+Production-grade. **858 тестов** при ~94% покрытии (critic/keys/store все >97%),
 CI зелён, push-to-prod CD живой, развёрнута на `disk-photon.exe.xyz`. LLM
 abstraction готова с **двумя провайдерами** (Q в проде, OpenRouter на полке);
 multi-user lite + TG-whitelist; фронтенд разбит до фазы 3 (`app.js`
