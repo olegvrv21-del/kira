@@ -105,7 +105,12 @@ def _safe_sid(sid: str | None) -> str:
     return uuid.uuid4().hex[:12]
 
 
-MAX_TURNS = 25
+# Default turn budget for /agent. Override globally via KIRA_MAX_TURNS,
+# or per-request by passing max_turns in AgentRequest (capped by
+# KIRA_MAX_TURNS_HARD). Bug-hunt / refactor tasks routinely need 40–60;
+# everyday chat is fine at 25. See app.py for the per-request plumbing.
+MAX_TURNS = int(os.environ.get('KIRA_MAX_TURNS', '25'))
+MAX_TURNS_HARD = int(os.environ.get('KIRA_MAX_TURNS_HARD', '100'))
 
 
 async def _llm_one_shot(
@@ -740,6 +745,7 @@ async def run_agent(
     session_id: str | None = None,
     history: list[dict] | None = None,
     images: list[dict] | None = None,
+    max_turns: int | None = None,
 ) -> AsyncIterator[bytes]:
     """Phase 3c.3: main agent loop is provider-agnostic.
 
@@ -757,6 +763,11 @@ async def run_agent(
     Switching `KIRA_LLM_PROVIDER` now actually swaps the wire format end-to-end.
     """
     session_id = _safe_sid(session_id)
+    # Effective turn budget: caller wins, clamped to [1, MAX_TURNS_HARD],
+    # default = MAX_TURNS (KIRA_MAX_TURNS env). Negative / None falls back.
+    effective_max_turns = MAX_TURNS
+    if max_turns is not None and max_turns > 0:
+        effective_max_turns = min(int(max_turns), MAX_TURNS_HARD)
     cwd_path = (WORKSPACES / session_id).resolve()
     if not str(cwd_path).startswith(str(WORKSPACES.resolve()) + os.sep):
         raise ValueError("invalid session_id")
@@ -841,7 +852,7 @@ async def run_agent(
     plan_nudge_budget = 2  # at most two automatic nudges per /agent call
 
     try:
-        for turn in range(MAX_TURNS):
+        for turn in range(effective_max_turns):
             if _is_cancelled():
                 yield _sse({"type": "cancelled"})
                 yield _sse({"type": "stats", "credits": credits, "context_pct": context_pct, "turns": turn})
@@ -1124,7 +1135,7 @@ async def run_agent(
             if (
                 consecutive_plan_only_rounds >= 2
                 and plan_nudge_budget > 0
-                and turn < MAX_TURNS - 1
+                and turn < effective_max_turns - 1
             ):
                 plan_nudge_budget -= 1
                 consecutive_plan_only_rounds = 0

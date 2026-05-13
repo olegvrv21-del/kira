@@ -343,6 +343,87 @@ async def test_run_agent_respects_max_turns(monkeypatch, tmp_path):
     assert "max turns" in events[-1]["message"].lower()
 
 
+@pytest.mark.asyncio
+async def test_run_agent_max_turns_per_request_override(monkeypatch, tmp_path):
+    """AgentRequest.max_turns must override MAX_TURNS for one call only."""
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    monkeypatch.setattr(ar, "MAX_TURNS", 3)
+    monkeypatch.setattr(ar, "MAX_TURNS_HARD", 100)
+
+    def fake_run_tool(name, args, cwd, sid=None):
+        return ("success", "ok", None)
+
+    monkeypatch.setattr(ar.toolkit, "run_tool", fake_run_tool)
+
+    counter = {"n": 0}
+
+    async def keep_calling(api_key, body, **kw):
+        counter["n"] += 1
+        yield (
+            "toolUseEvent",
+            {"toolUseId": f"tu{counter['n']}", "name": "fs_read",
+             "input": json.dumps({"path": "x"}), "stop": True},
+        )
+
+    with patch.object(q_client, "stream_q", keep_calling):
+        events = await _collect(ar.run_agent("k", "hi", session_id="unit_mt_o", max_turns=7))
+    # 7 wins over the global MAX_TURNS=3.
+    assert counter["n"] == 7, f"expected 7 turns, got {counter['n']}"
+    assert events[-1]["type"] == "error"
+    assert "max turns" in events[-1]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_max_turns_clamped_by_hard_cap(monkeypatch, tmp_path):
+    """Caller asking for 9999 turns gets capped at MAX_TURNS_HARD."""
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    monkeypatch.setattr(ar, "MAX_TURNS", 3)
+    monkeypatch.setattr(ar, "MAX_TURNS_HARD", 5)
+
+    def fake_run_tool(name, args, cwd, sid=None):
+        return ("success", "ok", None)
+
+    monkeypatch.setattr(ar.toolkit, "run_tool", fake_run_tool)
+    counter = {"n": 0}
+
+    async def keep_calling(api_key, body, **kw):
+        counter["n"] += 1
+        yield ("toolUseEvent",
+               {"toolUseId": f"tu{counter['n']}", "name": "fs_read",
+                "input": json.dumps({"path": "x"}), "stop": True})
+
+    with patch.object(q_client, "stream_q", keep_calling):
+        events = await _collect(ar.run_agent("k", "hi", session_id="unit_mt_c", max_turns=9999))
+    assert counter["n"] == 5, f"hard cap=5 should win, got {counter['n']}"
+    assert events[-1]["type"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_max_turns_none_falls_back_to_default(monkeypatch, tmp_path):
+    """max_turns=None / 0 / negative -> use module-level MAX_TURNS."""
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    monkeypatch.setattr(ar, "MAX_TURNS", 4)
+    monkeypatch.setattr(ar, "MAX_TURNS_HARD", 100)
+
+    def fake_run_tool(name, args, cwd, sid=None):
+        return ("success", "ok", None)
+
+    monkeypatch.setattr(ar.toolkit, "run_tool", fake_run_tool)
+
+    for override in (None, 0, -3):
+        counter = {"n": 0}
+
+        async def keep(api_key, body, **kw):
+            counter["n"] += 1
+            yield ("toolUseEvent",
+                   {"toolUseId": f"tu{counter['n']}", "name": "fs_read",
+                    "input": json.dumps({"path": "x"}), "stop": True})
+
+        with patch.object(q_client, "stream_q", keep):
+            await _collect(ar.run_agent("k", "hi", session_id=f"unit_mt_d_{override}", max_turns=override))
+        assert counter["n"] == 4, f"override={override!r} should fall back to MAX_TURNS=4, got {counter['n']}"
+
+
 # ---------- hook deny path ----------
 
 
