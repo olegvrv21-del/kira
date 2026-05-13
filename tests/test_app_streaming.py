@@ -231,7 +231,7 @@ def test_agent_endpoint_streams_run_agent(monkeypatch, tmp_path):
     import agent_runtime
     import agent_store
 
-    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None):
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
         # mirror real SSE shape
         yield ("data: " + json.dumps({"type": "meta", "session_id": session_id}) + "\n\n").encode()
         yield ("data: " + json.dumps({"type": "text", "delta": "hi"}) + "\n\n").encode()
@@ -266,7 +266,7 @@ def test_agent_endpoint_q_prefix_strip(monkeypatch):
     import agent_runtime
     captured = {}
 
-    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None):
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
         captured["model"] = model
         yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
 
@@ -280,7 +280,7 @@ def test_agent_endpoint_uses_default_model(monkeypatch):
     import agent_runtime
     captured = {}
 
-    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None):
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
         captured["model"] = model
         yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
 

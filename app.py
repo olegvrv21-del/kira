@@ -162,6 +162,10 @@ class AgentRequest(BaseModel):
     model: str | None = None
     session_id: str | None = None
     images: list[dict] | None = None  # [{"format":"png","data_base64":"..."}]
+    # Optional per-request turn budget. Default = KIRA_MAX_TURNS env (25).
+    # Clamped by KIRA_MAX_TURNS_HARD (100) in agent_runtime to keep a
+    # runaway loop from spending unbounded credits.
+    max_turns: int | None = None
 
 
 @app.get("/healthz")
@@ -900,7 +904,8 @@ async def agent_endpoint(req: AgentRequest, request: Request):
                     continue
                 agent_images.append({"format": fmt, "source": {"bytes": b64}})
         async for ev in agent_runtime.run_agent(
-            key_pool.current() or KIRO_API_KEY, req.prompt, model, session_id=sid, history=hist, images=agent_images
+            key_pool.current() or KIRO_API_KEY, req.prompt, model, session_id=sid, history=hist, images=agent_images,
+            max_turns=req.max_turns,
         ):
             try:
                 if ev.startswith(b"data: "):
