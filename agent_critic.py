@@ -62,7 +62,10 @@ def parse_verdict(text: str) -> dict:
     m = re.search(r"VERDICT\s*:\s*(OK|BLOCK)", t, re.IGNORECASE)
     verdict = m.group(1).upper() if m else "OK"
     rm = re.search(r"REASON\s*:\s*(.+)", t)
-    reason = (rm.group(1).strip() if rm else "").splitlines()[0] if rm else ""
+    # Guard against whitespace-only REASON: lines. `"".splitlines()` is `[]`
+    # so an unconditional `[0]` would raise IndexError and crash the caller
+    # (agent_runtime's auto-critic path right before git_commit).
+    reason = rm.group(1).strip().splitlines()[0] if rm and rm.group(1).strip() else ""
     issues = []
     in_issues = False
     for line in t.splitlines():
