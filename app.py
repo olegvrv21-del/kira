@@ -274,6 +274,47 @@ async def agent_self_endpoint():
     return agent_self.status(start_ts=_PROCESS_START)
 
 
+@app.get("/agent/prod/{what}")
+async def agent_prod_endpoint(what: str, lines: int = 50, grep: str | None = None, unit: str = "webchat", n: int = 10, ref: str = "HEAD~1"):
+    """Read-only host observation. Whitelisted commands only."""
+    import agent_prod
+
+    fns = {
+        "uptime": lambda: agent_prod.uptime(),
+        "df": lambda: agent_prod.df(),
+        "systemctl_status": lambda: agent_prod.systemctl_status(unit),
+        "journalctl": lambda: agent_prod.journalctl(lines=lines, grep=grep),
+        "git_log": lambda: agent_prod.git_log(n=n),
+        "git_diff": lambda: agent_prod.git_diff(ref=ref),
+    }
+    fn = fns.get(what)
+    if fn is None:
+        raise HTTPException(status_code=404, detail=f"unknown what={what!r}; allowed: {list(fns)}")
+    return fn()
+
+
+class _PROpen(BaseModel):
+    branch: str
+    title: str
+    body: str = ""
+    files: dict[str, str]
+    base: str = "main"
+
+
+@app.post("/agent/pr/open")
+async def agent_pr_open(req: _PROpen):
+    """Open a GitHub PR with files Kira authored. Branch must be `kira/*`."""
+    import agent_pr
+
+    return agent_pr.open_pr(
+        branch=req.branch,
+        title=req.title,
+        body=req.body,
+        files=req.files,
+        base=req.base,
+    )
+
+
 @app.get("/agent/health")
 async def agent_health():
     """Aggregate health snapshot.

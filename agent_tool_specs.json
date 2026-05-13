@@ -1304,6 +1304,45 @@
   },
     {
       "toolSpecification": {
+        "name": "prod_observe",
+        "description": "Read-only production observation. ONLY way for you to see the LIVE host (disk-photon) state — your filesystem and shell live inside a sandbox container. Use this when the user asks 'are there errors in the journal?', 'is webchat healthy?', 'how much disk?', 'what was the last commit?', etc. Argument `what` selects the action: 'uptime' (load+memory), 'df' (disk), 'systemctl_status' (with `unit`, default webchat), 'journalctl' (with optional `lines` 1-500 and `grep` substring filter, default 50 lines of webchat), 'git_log' (with `n` 1-50), 'git_diff' (with `ref`, default HEAD~1). Returns JSON {ok, stdout, stderr, returncode, duration_seconds}. No shell, no input interpolation — only whitelisted commands.",
+        "inputSchema": {
+          "json": {
+            "type": "object",
+            "properties": {
+              "what": {"type": "string", "enum": ["uptime", "df", "systemctl_status", "journalctl", "git_log", "git_diff"]},
+              "lines": {"type": "integer"},
+              "grep": {"type": "string"},
+              "unit": {"type": "string"},
+              "n": {"type": "integer"},
+              "ref": {"type": "string"}
+            },
+            "required": ["what"]
+          }
+        }
+      }
+    },
+    {
+      "toolSpecification": {
+        "name": "gh_pr_open",
+        "description": "Open a GitHub Pull Request with files you authored. This is THE only way you can change the deployed code — a human must merge the PR before CD ships it. Branch name MUST start with `kira/` (e.g. `kira/fix-typo`, `kira/feat-x`). Provide title (single line, <72 chars), body (markdown, explain WHAT and WHY), and files (dict mapping repo-relative path → full file content; existing files are overwritten, new files are created). Hard limits: at most 20 files, total <256 KiB, files under `.github/workflows/` are rejected (workflow injection guard). Use this when the user accepts a fix and asks to open a PR — do NOT push directly to main and do NOT bundle unrelated changes. Returns {ok, url, branch, base} or {ok:false, error}.",
+        "inputSchema": {
+          "json": {
+            "type": "object",
+            "properties": {
+              "branch": {"type": "string", "description": "must match ^kira/[a-z0-9][a-z0-9._-]{1,60}$"},
+              "title": {"type": "string"},
+              "body": {"type": "string"},
+              "files": {"type": "object", "description": "map of repo-relative path -> file content"},
+              "base": {"type": "string", "description": "target branch, default 'main'"}
+            },
+            "required": ["branch", "title", "files"]
+          }
+        }
+      }
+    },
+    {
+      "toolSpecification": {
         "name": "self_status",
         "description": "ALWAYS call this tool when the user asks who you are, what your version is, what git SHA is deployed, what was committed recently, what your coverage is, or any variant of self-introspection. Returns a snapshot: git branch + HEAD + last 5 commits, test count, coverage %, in-flight session count, host name, uptime, sandbox flags, available tool names. Cheap (~5ms), safe, no secrets. Takes no arguments — invoke as `self_status({})`. Do not guess this information from memory; always call the tool.",
         "inputSchema": {

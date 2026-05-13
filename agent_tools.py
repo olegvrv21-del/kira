@@ -458,6 +458,49 @@ def self_status(args: dict[str, Any], cwd: str) -> str:
     return agent_self.status_text(start_ts=getattr(_app, "_PROCESS_START", None))
 
 
+def prod_observe(args: dict[str, Any], cwd: str) -> str:
+    """Wrapper that exposes agent_prod functions to the LLM.
+
+    args: { what: uptime|df|systemctl_status|journalctl|git_log|git_diff,
+            lines?: int, grep?: str, unit?: str, n?: int, ref?: str }
+    """
+    import json as _json
+
+    import agent_prod
+
+    what = (args.get("what") or "").strip()
+    fns = {
+        "uptime": lambda: agent_prod.uptime(),
+        "df": lambda: agent_prod.df(),
+        "systemctl_status": lambda: agent_prod.systemctl_status(args.get("unit") or "webchat"),
+        "journalctl": lambda: agent_prod.journalctl(
+            lines=int(args.get("lines") or 50), grep=args.get("grep")
+        ),
+        "git_log": lambda: agent_prod.git_log(n=int(args.get("n") or 10)),
+        "git_diff": lambda: agent_prod.git_diff(ref=args.get("ref") or "HEAD~1"),
+    }
+    fn = fns.get(what)
+    if fn is None:
+        raise ValueError(f"unknown what={what!r}; allowed: {list(fns)}")
+    return _json.dumps(fn(), ensure_ascii=False, indent=2)
+
+
+def gh_pr_open(args: dict[str, Any], cwd: str) -> str:
+    """Open a GitHub PR. args: branch (kira/*), title, body, files {path: content}."""
+    import json as _json
+
+    import agent_pr
+
+    res = agent_pr.open_pr(
+        branch=(args.get("branch") or "").strip(),
+        title=(args.get("title") or "").strip(),
+        body=args.get("body") or "",
+        files=args.get("files") or {},
+        base=args.get("base") or "main",
+    )
+    return _json.dumps(res, ensure_ascii=False, indent=2)
+
+
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     import agent_skills
 
@@ -505,6 +548,8 @@ TOOLS = {
     "review_changes": review_changes,
     "coverage_status": coverage_status,
     "self_status": self_status,
+    "prod_observe": prod_observe,
+    "gh_pr_open": gh_pr_open,
 }
 
 

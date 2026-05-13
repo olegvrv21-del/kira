@@ -1369,6 +1369,68 @@ def coverage_status(args: dict[str, Any], cwd: str, sid: str) -> str:
     return "\n".join(lines)
 
 
+def _host_post(path: str, payload: dict) -> dict:
+    """Reach the host's webchat from inside the sandbox via host-gateway."""
+    import json as _json
+    import os as _os
+    import urllib.request
+
+    url = f"http://host.docker.internal:3000{path}"
+    data = _json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    tok = _os.environ.get("KIRA_AUTH_TOKEN")
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return _json.loads(r.read().decode("utf-8"))
+
+
+def _host_get(path: str) -> dict:
+    import json as _json
+    import os as _os
+    import urllib.request
+
+    url = f"http://host.docker.internal:3000{path}"
+    req = urllib.request.Request(url)
+    tok = _os.environ.get("KIRA_AUTH_TOKEN")
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return _json.loads(r.read().decode("utf-8"))
+
+
+def prod_observe(args: dict[str, Any], cwd: str, sid: str) -> str:
+    import json as _json
+    import urllib.parse
+
+    what = (args.get("what") or "").strip()
+    if not what:
+        raise ValueError("what is required (uptime|df|systemctl_status|journalctl|git_log|git_diff)")
+    qs = {}
+    for k in ("lines", "grep", "unit", "n", "ref"):
+        v = args.get(k)
+        if v is not None:
+            qs[k] = str(v)
+    url = f"/agent/prod/{urllib.parse.quote(what)}"
+    if qs:
+        url += "?" + urllib.parse.urlencode(qs)
+    return _json.dumps(_host_get(url), ensure_ascii=False, indent=2)
+
+
+def gh_pr_open(args: dict[str, Any], cwd: str, sid: str) -> str:
+    import json as _json
+
+    payload = {
+        "branch": (args.get("branch") or "").strip(),
+        "title": (args.get("title") or "").strip(),
+        "body": args.get("body") or "",
+        "files": args.get("files") or {},
+        "base": args.get("base") or "main",
+    }
+    return _json.dumps(_host_post("/agent/pr/open", payload), ensure_ascii=False, indent=2)
+
+
 def self_status(args: dict[str, Any], cwd: str, sid: str) -> str:
     """Read self-introspection snapshot from the host repo (mounted at /host/webchat)."""
     import os as _os
@@ -1439,6 +1501,8 @@ TOOLS = {
     "review_changes": review_changes,
     "coverage_status": coverage_status,
     "self_status": self_status,
+    "prod_observe": prod_observe,
+    "gh_pr_open": gh_pr_open,
 }
 
 
