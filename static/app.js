@@ -100,6 +100,15 @@ installFetchInterceptor();
     });
     if (localStorage.getItem(LS_DRAWER) !== '0' && window.innerWidth > 720) openDrawer();
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+    // Auto-close drawer on mobile after selecting any nav item / chat / action
+    document.getElementById('drawer').addEventListener('click', (e) => {
+      if (window.innerWidth > 720) return;
+      if (!document.body.classList.contains('drawer-open')) return;
+      const t = e.target.closest('[data-nav], .chat-item, .session-item, #new-chat');
+      if (!t) return;
+      // small delay so the original click handler runs first
+      setTimeout(closeDrawer, 0);
+    });
 
     /* lang toggle */
     document.querySelectorAll('#lang-toggle button').forEach(b => {
