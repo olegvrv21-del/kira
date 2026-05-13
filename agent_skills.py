@@ -105,7 +105,13 @@ def create_skill(name: str, description: str, body: str) -> dict:
         return {"ok": False, "error": "body too large (>20 KiB)"}
 
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    target = SKILLS_DIR / f"{name}.md"
+    # Path safety: even though _NAME_RE rejects "/", ".." and dots, we resolve
+    # and verify containment explicitly so CodeQL (and any future relaxation
+    # of _NAME_RE) cannot lead to path injection outside SKILLS_DIR.
+    safe_dir = SKILLS_DIR.resolve()
+    target = (safe_dir / (name + ".md")).resolve()
+    if safe_dir not in target.parents:
+        return {"ok": False, "error": "invalid path (containment violated)"}
     if target.exists():
         return {"ok": False, "error": f"skill '{name}' already exists"}
 
