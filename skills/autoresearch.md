@@ -17,6 +17,63 @@ Do NOT use for:
 - Bug fixes triggered by Oleg in real time
 - Anything that touches money, auth, guardrails, .frozen, workflows
 
+## The Iron Laws
+
+Three invariants. Each was bought with a real failed drill in May 2026.
+Follow them literally; "close enough" is what failure looks like.
+
+```
+1. QUOTE THE MARKER LINE VERBATIM.
+   gh_pr_open and ci_status return `OK ...` or `ERROR: ...` on line 1.
+   Whenever you communicate the result — to Oleg, into experiments.tsv,
+   into JOURNAL.md — that exact line goes first. Not a paraphrase, not
+   your interpretation, not your summary.
+   Drill 1 (before this marker existed): gh_pr_open returned raw JSON
+   `{ok:true, pr:29, url:...}`. Kira told Oleg gh_pr_open had failed
+   with a stale sandbox clone. The PR was real and fine. Pure
+   hallucination — exactly the failure mode the marker now exists to
+   prevent. Quoting it verbatim is how that protection actually works.
+
+2. ONE TOOL CALL TO WAIT FOR CI. NEVER A POLL LOOP IN YOUR HEAD.
+   Use prod_observe({what:"ci_status", pr:N, wait:true, timeout:300}).
+   This blocks server-side until rollup is non-pending. Three outcomes:
+     - rollup green/red/mixed → done, record it.
+     - rollup pending with `waited` near your timeout → CI is slow.
+       Log status=timeout in the TSV and move on. That's fine.
+     - rollup pending with `waited` close to zero → you skipped wait=true.
+       That's a one-shot snapshot. Issue the call again with wait=true
+       instead of starting a poll loop by hand.
+   Drill 2 — a `sleep 60` between back-to-back ci_status calls ended
+   the session. Drill 3 — a `sleep 15` did the same on a fully-green CI
+   run. Drill 4 — several `ci_status` calls in a row with no sleep at
+   all (pending, pending, pending…) ended the session anyway, because
+   repeated identical pending tool_results led the model to wrap up.
+   wait=true closes all three classes.
+
+3. ONE ROW PER EXPERIMENT IN ~/notebook/experiments.tsv.
+   The instant gh_pr_open returns OK, append a row with status=opened
+   and ci empty. When wait=true returns, update the same row: set ci to
+   the rollup (green/red/mixed/pending) and set status to green, red,
+   or timeout. No row, no experiment.
+```
+
+## Red Flags — Stop and Re-Read the Iron Laws
+
+These are real thoughts the model had during past drills. Each one shipped
+a broken session. If one shows up, the next thing you emit is a tool_call,
+not prose.
+
+| Thought | Reality |
+|---|---|
+| "gh_pr_open may have failed because the sandbox clone is stale, let me fetch first" | `agent_pr.open_pr` does a fresh `git clone --depth 1` on every call. There is no persistent clone to be stale. Re-read line 1 of the response. (Drill 1: PR was actually opened OK and CI later went green.) |
+| "CI just started, let me wait a bit before polling" | `wait=true` already waits. No pre-sleep. |
+| "sleep 15 is short, that won't break anything" | It will. Drill 3 lost a fully-green CI run to one `sleep 15`. Use `wait=true`. |
+| "poll N: pending, poll N+1: pending, this is taking forever" | You are in a hand-rolled loop. Stop. The correct call was `ci_status wait=true` once. |
+| "CI is probably green by now, I'll just write status=green and move on" | No. Read the marker. Both directions of hallucination have happened (drill 1: a successful PR was reported as failed). |
+| "I'll log to experiments.tsv at the end of the session" | The end may not arrive: drills 4 and 5 had the session killed by an unrelated prod deploy restart mid-loop. Write the `opened` row the moment gh_pr_open returns OK, before anything else. |
+| "this experiment is too small to log" | Log it. The value of the journal is many small honest rows; selective logging is the same as lying to yourself. |
+| "the previous tool errored, let me just retry" | First paste the ERROR line verbatim. Then decide whether to retry or stop. |
+
 ## Setup (once per session)
 
 1. **Agree on a session tag** with Oleg. If asleep, use date+hour, e.g. `0514-23`.
@@ -49,25 +106,22 @@ Do NOT use for:
 - Add pip dependencies
 - Disable guardrails / scanner / kill-switch
 
-## Honesty rule — READ THE TOOL RESPONSE
+## Honesty rule — mechanical recipe for the marker line
 
-After every `gh_pr_open` call, before you do ANYTHING else, do this:
+This is the concrete how-to for Iron Law #1.
 
-1. Read the FIRST LINE of the tool response.
-2. If it starts with `OK pr=N` — PR was created successfully. Note N.
-3. If it starts with `ERROR:` — PR creation failed. The reason follows on that same line.
-4. Quote that first line in your reply to the user, verbatim. Then proceed.
+After every `gh_pr_open` or `ci_status` call, before you do anything else:
 
-Do NOT guess what happened. Do NOT invent a diagnosis. The first line of the response is the truth.
+1. Read line 1 of the response.
+2. If it starts with `OK ...` — success. Note the fields you need (pr, rollup
+   — whatever's relevant).
+3. If it starts with `ERROR: ...` — failure. The reason is on that same line.
+4. Quote line 1 verbatim wherever you communicate the result.
 
-This rule exists because in an early drill Kira (you) opened two PRs successfully (#29 and #30, both green), then reported to Oleg "the tool failed, sandbox clone is stale, needs a fix". That was a hallucination — the PRs were real and CI passed on both. The new response format makes this mistake harder: `OK pr=N` is unambiguous.
-
-Same rule for `ci_status`: the response NOW also starts with a marker line.
-
-- Success: `OK rollup=green pr=29 state=OPEN pass=6 fail=0 pending=0`
-- Failure: `ERROR: <reason>`
-
-Just read line 1. Do not parse the JSON below unless you need the per-check list (e.g. which job failed). Do not invent state. Do not paraphrase.
+Line 2 onward is the raw JSON. Read it only if you need a specific field
+(e.g. failing check name in `checks[*]`). Never paraphrase line 1. Never
+invent state. The story above the marker line in Iron Law #1 is what
+happens when you skip this step.
 
 ## The experiment loop
 
@@ -107,14 +161,16 @@ LOOP:
      If marker shows `rollup=pending` (server-side timeout reached),
      log status=timeout and stop — don't retry.
 
-  7. Decide based on the final rollup:
-       - rollup == "green" → status="green". Oleg will merge in the morning.
-       - rollup == "red"   → status="red". Read failing check name from
-         the checks list. Note it in the TSV `notes` column.
-       - rollup == "mixed" → status="red" (some checks failed even though
-         some passed; treat conservatively).
-       - rollup == "none"  → CI did not run yet — keep polling.
-       - exceeded ~5min polling → status="timeout".
+  7. Decide based on the final rollup returned by `wait=true`:
+       - `green` → status="green". Oleg will merge in the morning.
+       - `red`   → status="red". Read failing check name from the checks
+         list in the JSON body. Note it in the TSV `notes` column.
+       - `mixed` → status="red" (some checks failed even though some
+         passed; treat conservatively).
+       - `pending` (waited ≈ timeout) → status="timeout". Move on.
+       - `none` (no checks at all) → status="timeout". Either CI did
+         not start within the window or the PR has no workflows attached.
+         Move on; do not start polling by hand.
 
   8. Update the row in experiments.tsv with the final status.
 
@@ -131,16 +187,22 @@ LOOP:
 
 ## Metrics — what counts
 
-The numeric signal is the CI rollup returned by `prod_observe({what: "ci_status", pr: N})`:
+The numeric signal is the CI rollup returned by `prod_observe({what: "ci_status", pr: N, wait: true})`:
 
-- `green` — all 6 checks pass (lint, pytest, CodeQL python+js, Analyze, squash-merge)
+- `green` — all checks pass (lint, pytest, CodeQL python+js, Analyze, squash-merge)
 - `red`   — at least one check failed (FAILURE / CANCELLED / TIMED_OUT / ACTION_REQUIRED)
-- `pending` — CI still running; poll again
 - `mixed` — odd combination of conclusions; treat as red conservatively
-- `none`  — CI has not started yet; poll again
-- `timeout` — gave up after ~5 minutes of polling
+- `pending` — wait=true timed out before CI finished; record as `timeout`
+- `none`  — no checks attached to the PR within the window; record as `timeout`
 
-You see the per-check list inside the same response (`checks[*].name`, `checks[*].conclusion`, `checks[*].url`). When a check is red, that gives you exactly which one (pytest? lint? CodeQL?) so the TSV `notes` column can record useful detail.
+`wait=true` will only ever return `green`, `red`, `mixed`, or (`pending` with
+waited ≈ timeout). There is no second poll; the marker line is the final
+answer for this experiment.
+
+You see the per-check list inside the same response (`checks[*].name`,
+`checks[*].conclusion`, `checks[*].url`). When a check is red, that gives
+you exactly which one (pytest? lint? CodeQL?) so the TSV `notes` column
+can record useful detail.
 
 You still do NOT have access to `pytest -q` output directly — only the conclusion. Coverage delta and test count delta are not exposed yet; out of scope per experiment.
 
@@ -205,10 +267,9 @@ Idea: "agent_store.list_sessions has no test for owner_id=None when there are ze
 3. Write a new test in your head. 8 lines.
 4. `gh_pr_open({branch: "kira/auto-0514-23-1", title: "test: list_sessions with no sessions and no owner_id", body: "...", files: {"tests/test_agent_store_empty.py": "<full content>"}})`.
 5. TSV row with status=opened.
-6. Sleep 90s, check via `prod_observe` git_log — PR not merged yet (expected).
-7. Wait for CI with one call: `prod_observe({what: "ci_status", pr: <N>, wait: true, timeout: 300})`. Server-side polling — returns when CI is non-pending or timeout elapses. NEVER use `execute_bash sleep` and NEVER hand-roll a poll loop in the model.
-8. Final rollup `green` → log `green` in the TSV. Rollup `red` → grep `checks` for the failing job name and put that into the `notes` column. Rollup `timeout` → log `timeout`.
-9. Done. GOTO 1.
+6. Wait for CI with one call: `prod_observe({what: "ci_status", pr: <N>, wait: true, timeout: 300})`. Server-side polling — returns when CI is non-pending or timeout elapses. NEVER use `execute_bash sleep` and NEVER hand-roll a poll loop in the model. (No `git_log` peek either: PRs are not auto-merged — Oleg merges in the morning.)
+7. Final rollup `green` → log `green` in the TSV. Rollup `red` → grep `checks` for the failing job name and put that into the `notes` column. Rollup `timeout` → log `timeout`.
+8. Done. GOTO 1.
 
 This is the honest signal — same rollup Oleg sees on the PR page. No tentative "awaiting human merge" guesses. If you see `red`, you know exactly which check broke and can decide whether to open a follow-up PR fixing it (often yes for lint/pytest, sometimes no for CodeQL warnings).
 
@@ -218,4 +279,4 @@ Karpathy showed that one good `program.md` + one numeric metric + one TSV is eno
 - **Single metric becomes CI green/red** instead of `val_bpb` — coarser, but honest
 - **Loop interface is `gh_pr_open`** instead of `git commit` — every experiment is a PR Oleg can review
 
-This is intentional. The point is honest, reviewable experiments, not local cleverness. With `ci_status(pr)` (added in PR #27), the loop now has real measurement — green/red is the actual CI signal Oleg sees on the PR page, not a sandbox guess.
+This is intentional. The point is honest, reviewable experiments, not local cleverness. With `ci_status(pr)` (added in PR #27, gained server-side `wait=true` in PR #38), the loop now has real measurement — green/red is the actual CI signal Oleg sees on the PR page, not a sandbox guess. One tool call per experiment to wait; no in-model polling; the Iron Laws at the top of this file are the contract.
