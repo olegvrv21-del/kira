@@ -49,6 +49,21 @@ Do NOT use for:
 - Add pip dependencies
 - Disable guardrails / scanner / kill-switch
 
+## Honesty rule — READ THE TOOL RESPONSE
+
+After every `gh_pr_open` call, before you do ANYTHING else, do this:
+
+1. Read the FIRST LINE of the tool response.
+2. If it starts with `OK pr=N` — PR was created successfully. Note N.
+3. If it starts with `ERROR:` — PR creation failed. The reason follows on that same line.
+4. Quote that first line in your reply to the user, verbatim. Then proceed.
+
+Do NOT guess what happened. Do NOT invent a diagnosis. The first line of the response is the truth.
+
+This rule exists because in an early drill Kira (you) opened two PRs successfully (#29 and #30, both green), then reported to Oleg "the tool failed, sandbox clone is stale, needs a fix". That was a hallucination — the PRs were real and CI passed on both. The new response format makes this mistake harder: `OK pr=N` is unambiguous.
+
+Same rule for `ci_status`: the first key to check is `rollup`. If `rollup` is missing or the response has `ok: false` then quote the error verbatim — do not paraphrase.
+
 ## The experiment loop
 
 Repeat until interrupted:

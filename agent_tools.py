@@ -509,7 +509,15 @@ def prod_observe(args: dict[str, Any], cwd: str) -> str:
 
 
 def gh_pr_open(args: dict[str, Any], cwd: str) -> str:
-    """Open a GitHub PR. args: branch (kira/*), title, body, files {path: content}."""
+    """Open a GitHub PR. args: branch (kira/*), title, body, files {path: content}.
+
+    Response format is deliberately human-first: the first line is a clear
+    OK/ERROR marker the model can parse without ambiguity, followed by the
+    raw JSON in a fenced block for full detail. This avoids the "model
+    invents an error because JSON parsing failed" failure mode observed
+    during the autoresearch drill (drill-1/drill-2 succeeded but Kira
+    reported them as errors).
+    """
     import json as _json
 
     import agent_pr
@@ -521,7 +529,16 @@ def gh_pr_open(args: dict[str, Any], cwd: str) -> str:
         files=args.get("files") or {},
         base=args.get("base") or "main",
     )
-    return _json.dumps(res, ensure_ascii=False, indent=2)
+    raw = _json.dumps(res, ensure_ascii=False, indent=2)
+    if res.get("ok"):
+        pr_n = res.get("pr") or "?"
+        url = res.get("url") or ""
+        branch = res.get("branch") or ""
+        head = f"OK pr={pr_n} branch={branch} url={url}"
+    else:
+        err = (res.get("error") or "unknown error").splitlines()[0][:300]
+        head = f"ERROR: {err}"
+    return f"{head}\n\nraw response:\n{raw}"
 
 
 def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
