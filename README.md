@@ -215,3 +215,5 @@ integration (pyright + typescript-language-server) and frontend phase 4.
 ## License
 
 MIT © 2026 Oleg Vorobiev. See [LICENSE](LICENSE).
+
+<!-- drill-3: autoresearch v4 loop check -->
