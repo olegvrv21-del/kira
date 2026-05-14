@@ -866,8 +866,25 @@ async def proposals_create(request: Request, body: dict | None = None):
     n = max(1, min(50, n))
 
     # Gather recent user->assistant pairs across recent sessions.
+    # Q-provider format: each msg is either {userInputMessage: {content}} or
+    # {assistantResponseMessage: {content}}. We pull the embedded text and
+    # strip the synthetic CONTEXT-ENTRY / USER-MESSAGE markers so the scorer
+    # sees the actual user turn, not the wrapper.
     sessions = agent_store.list_sessions(limit=20)
     pairs: list[dict] = []
+
+    def _extract_user(content: str) -> str:
+        # Pull text between USER MESSAGE BEGIN/END if present, else strip the
+        # CONTEXT-ENTRY wrapper.
+        if not content:
+            return ""
+        m = re.search(r"--- USER MESSAGE BEGIN ---\s*(.*?)\s*--- USER MESSAGE END ---", content, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        # Strip CONTEXT ENTRY frame if it's the only thing.
+        cleaned = re.sub(r"--- CONTEXT ENTRY BEGIN ---.*?--- CONTEXT ENTRY END ---", "", content, flags=re.DOTALL)
+        return cleaned.strip()
+
     for sess in sessions:
         sid = sess.get("sid") if isinstance(sess, dict) else None
         if not sid:
@@ -875,15 +892,29 @@ async def proposals_create(request: Request, body: dict | None = None):
         msgs = agent_store.load_history(sid) or []
         last_user = None
         for m in msgs:
-            role = m.get("role")
-            content = m.get("content") or ""
-            if role == "user":
-                last_user = content if isinstance(content, str) else str(content)
-            elif role == "assistant" and last_user:
-                txt = content if isinstance(content, str) else str(content)
-                if txt.strip():
-                    pairs.append({"user": last_user, "assistant": txt})
-                last_user = None
+            if not isinstance(m, dict):
+                continue
+            if "userInputMessage" in m:
+                content = (m["userInputMessage"] or {}).get("content") or ""
+                u = _extract_user(content) if isinstance(content, str) else ""
+                if u:
+                    last_user = u
+            elif "assistantResponseMessage" in m:
+                content = (m["assistantResponseMessage"] or {}).get("content") or ""
+                if isinstance(content, str) and content.strip() and last_user:
+                    pairs.append({"user": last_user, "assistant": content.strip()})
+                    last_user = None
+            else:
+                # OpenAI-style fallback.
+                role = m.get("role")
+                content = m.get("content") or ""
+                if role == "user":
+                    last_user = content if isinstance(content, str) else str(content)
+                elif role == "assistant" and last_user:
+                    txt = content if isinstance(content, str) else str(content)
+                    if txt.strip():
+                        pairs.append({"user": last_user, "assistant": txt})
+                        last_user = None
         if len(pairs) >= n:
             break
     pairs = pairs[:n]
