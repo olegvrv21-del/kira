@@ -500,6 +500,7 @@ def prod_observe(args: dict[str, Any], cwd: str) -> str:
         ),
         "git_log": lambda: agent_prod.git_log(n=int(args.get("n") or 10)),
         "git_diff": lambda: agent_prod.git_diff(ref=args.get("ref") or "HEAD~1"),
+        "ci_status": lambda: agent_prod.ci_status(pr=int(args.get("pr") or 0)),
     }
     fn = fns.get(what)
     if fn is None:

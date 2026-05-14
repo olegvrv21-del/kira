@@ -280,7 +280,7 @@ async def agent_self_endpoint():
 
 
 @app.get("/agent/prod/{what}")
-async def agent_prod_endpoint(what: str, lines: int = 50, grep: str | None = None, unit: str = "webchat", n: int = 10, ref: str = "HEAD~1"):
+async def agent_prod_endpoint(what: str, lines: int = 50, grep: str | None = None, unit: str = "webchat", n: int = 10, ref: str = "HEAD~1", pr: int = 0):
     """Read-only host observation. Whitelisted commands only."""
     import agent_prod
 
@@ -291,6 +291,7 @@ async def agent_prod_endpoint(what: str, lines: int = 50, grep: str | None = Non
         "journalctl": lambda: agent_prod.journalctl(lines=lines, grep=grep),
         "git_log": lambda: agent_prod.git_log(n=n),
         "git_diff": lambda: agent_prod.git_diff(ref=ref),
+        "ci_status": lambda: agent_prod.ci_status(pr=pr),
     }
     fn = fns.get(what)
     if fn is None:
