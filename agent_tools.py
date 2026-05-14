@@ -483,8 +483,15 @@ def self_status(args: dict[str, Any], cwd: str) -> str:
 def prod_observe(args: dict[str, Any], cwd: str) -> str:
     """Wrapper that exposes agent_prod functions to the LLM.
 
-    args: { what: uptime|df|systemctl_status|journalctl|git_log|git_diff,
-            lines?: int, grep?: str, unit?: str, n?: int, ref?: str }
+    args: { what: uptime|df|systemctl_status|journalctl|git_log|git_diff|ci_status,
+            lines?: int, grep?: str, unit?: str, n?: int, ref?: str, pr?: int }
+
+    For `ci_status` the response is prefixed with a single-line marker so the
+    model cannot mistake it for an error (see PR #31 for context):
+        OK rollup=green pr=29 state=OPEN pass=6 fail=0 pending=0
+        ERROR: <reason>
+    Other actions return raw JSON (no marker — they're informational, not
+    decisional).
     """
     import json as _json
 
@@ -505,7 +512,26 @@ def prod_observe(args: dict[str, Any], cwd: str) -> str:
     fn = fns.get(what)
     if fn is None:
         raise ValueError(f"unknown what={what!r}; allowed: {list(fns)}")
-    return _json.dumps(fn(), ensure_ascii=False, indent=2)
+
+    result = fn()
+    raw_json = _json.dumps(result, ensure_ascii=False, indent=2)
+
+    if what == "ci_status":
+        if result.get("ok"):
+            head = (
+                f"OK rollup={result.get('rollup', '?')} "
+                f"pr={result.get('pr', '?')} "
+                f"state={result.get('state', '?')} "
+                f"pass={result.get('n_pass', 0)} "
+                f"fail={result.get('n_fail', 0)} "
+                f"pending={result.get('n_pending', 0)}"
+            )
+        else:
+            err = (result.get("error") or "unknown error").splitlines()[0][:300]
+            head = f"ERROR: {err}"
+        return f"{head}\n\nraw response:\n{raw_json}"
+
+    return raw_json
 
 
 def gh_pr_open(args: dict[str, Any], cwd: str) -> str:
