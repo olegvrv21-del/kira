@@ -922,7 +922,7 @@ async def proposals_create(request: Request, body: dict | None = None):
         return {"ok": False, "error": "no recent assistant messages to evaluate"}
 
     # Score each pair, keep the low scorers.
-    api_key = agent_keys.key_pool.current() or ""
+    api_key = key_pool.current() or ""
     scored = []
     for p in pairs:
         s = await agent_self_improve.score_answer(
