@@ -34,7 +34,7 @@ Do NOT use for:
 | `fs_read` / `grep` / `glob` | inspect files in your sandbox copy of the codebase |
 | `execute_bash` | run things inside the sandbox (lint, ruff, simple python tests) |
 | `self_status` | get current prod SHA, test count, coverage |
-| `prod_observe` | watch prod `git_log` to see what merged, `journalctl` for runtime errors |
+| `prod_observe` | watch prod: `git_log` (merges), `journalctl` (runtime errors), **`ci_status` (read CI rollup for any PR you opened)** |
 | `gh_pr_open` | the ONLY way to actually change the codebase. files map: {path: full new content} |
 | `propose_improvement` | write a markdown note to `~/notebook/proposals/` when an idea needs human judgement before code |
 | `fs_write` | edit `~/notebook/experiments.tsv` and your own TODO scratchpads |
@@ -72,18 +72,20 @@ LOOP:
   5. Append a row to ~/notebook/experiments.tsv with status=opened:
        ts<TAB>tag<TAB>idea<TAB>pr_number<TAB>opened<TAB><TAB><TAB><notes>
 
-  6. Wait 60-90 seconds (sleep via execute_bash if needed), then
-     prod_observe to check: did the PR run CI? You will see the PR number
-     in the response. CI status is best observed by waiting + retrying.
-     Use prod_observe({what: "git_log", n: 5}) to see if it merged.
+  6. Wait 60 seconds (sleep via execute_bash), then poll CI:
+       prod_observe({what: "ci_status", pr: <PR_NUMBER>})
+     This returns rollup: "green" | "red" | "pending" | "mixed" | "none".
+     If pending, sleep 30s and poll again. Give up after ~5 minutes total
+     polling (status=timeout).
 
-  7. Decide based on CI:
-       - All checks green → status="green", note the PR number. Oleg will
-         decide whether to merge in the morning.
-       - Any check red    → status="red", read the failing job's name via
-         prod_observe({what: "journalctl"}) if it concerns webchat
-         service; otherwise just note "see PR".
-       - Timed out        → status="timeout" after 5 minutes of polling.
+  7. Decide based on the final rollup:
+       - rollup == "green" → status="green". Oleg will merge in the morning.
+       - rollup == "red"   → status="red". Read failing check name from
+         the checks list. Note it in the TSV `notes` column.
+       - rollup == "mixed" → status="red" (some checks failed even though
+         some passed; treat conservatively).
+       - rollup == "none"  → CI did not run yet — keep polling.
+       - exceeded ~5min polling → status="timeout".
 
   8. Update the row in experiments.tsv with the final status.
 
@@ -100,15 +102,18 @@ LOOP:
 
 ## Metrics — what counts
 
-There is only one numeric signal in Kira's sandbox: **CI status**.
+The numeric signal is the CI rollup returned by `prod_observe({what: "ci_status", pr: N})`:
 
-- `green` = all 6 checks pass (lint, pytest, CodeQL python, CodeQL js, Analyze, squash-merge)
-- `red`   = at least one check failed
-- `timeout` = waited too long
+- `green` — all 6 checks pass (lint, pytest, CodeQL python+js, Analyze, squash-merge)
+- `red`   — at least one check failed (FAILURE / CANCELLED / TIMED_OUT / ACTION_REQUIRED)
+- `pending` — CI still running; poll again
+- `mixed` — odd combination of conclusions; treat as red conservatively
+- `none`  — CI has not started yet; poll again
+- `timeout` — gave up after ~5 minutes of polling
 
-You do not have access to `pytest -q` output directly. You see CI as a yes/no. If a PR is red, you can `prod_observe` the journalctl for any clues but mostly you just learn "this approach broke something" and move on.
+You see the per-check list inside the same response (`checks[*].name`, `checks[*].conclusion`, `checks[*].url`). When a check is red, that gives you exactly which one (pytest? lint? CodeQL?) so the TSV `notes` column can record useful detail.
 
-Coverage delta, test count delta, lint count delta — these are visible only in PR comments or after merge. Out of scope for one experiment.
+You still do NOT have access to `pytest -q` output directly — only the conclusion. Coverage delta and test count delta are not exposed yet; out of scope per experiment.
 
 ## TSV format
 
@@ -172,11 +177,11 @@ Idea: "agent_store.list_sessions has no test for owner_id=None when there are ze
 4. `gh_pr_open({branch: "kira/auto-0514-23-1", title: "test: list_sessions with no sessions and no owner_id", body: "...", files: {"tests/test_agent_store_empty.py": "<full content>"}})`.
 5. TSV row with status=opened.
 6. Sleep 90s, check via `prod_observe` git_log — PR not merged yet (expected).
-7. Sleep 60s, check again. Try to look at the PR via `execute_bash` if `gh` is available in your sandbox — usually it is not, so accept "no news = still pending".
-8. After ~3 minutes, if no error landed via journalctl, mark status=green tentatively (you cannot read CI from sandbox; rely on Oleg in the morning to flag any red PRs).
+7. Sleep 60s, then `prod_observe({what: "ci_status", pr: <N>})`. If `rollup == "pending"`, sleep 30s, poll again. After at most ~5 minutes of polling, you will have a final rollup.
+8. Final rollup `green` → log `green` in the TSV. Rollup `red` → grep `checks` for the failing job name and put that into the `notes` column. Rollup `timeout` → log `timeout`.
 9. Done. GOTO 1.
 
-The slight catch: from inside sandbox you cannot directly see CI status. The accurate signal is whether the PR ended up in `prod_observe({what: "git_log", n: 20})` (Oleg merged it) — but that takes hours, not minutes. So `green` in your TSV during a session means "PR opened cleanly, no obvious build error visible in journalctl, awaiting human merge". This is a known limitation; if Oleg later wants real CI integration, that is a separate PR adding a `ci_status` tool.
+This is the honest signal — same rollup Oleg sees on the PR page. No tentative "awaiting human merge" guesses. If you see `red`, you know exactly which check broke and can decide whether to open a follow-up PR fixing it (often yes for lint/pytest, sometimes no for CodeQL warnings).
 
 ## Why this skill exists
 
@@ -184,4 +189,4 @@ Karpathy showed that one good `program.md` + one numeric metric + one TSV is eno
 - **Single metric becomes CI green/red** instead of `val_bpb` — coarser, but honest
 - **Loop interface is `gh_pr_open`** instead of `git commit` — every experiment is a PR Oleg can review
 
-This is intentional. The point is honest, reviewable experiments, not local cleverness.
+This is intentional. The point is honest, reviewable experiments, not local cleverness. With `ci_status(pr)` (added in PR #27), the loop now has real measurement — green/red is the actual CI signal Oleg sees on the PR page, not a sandbox guess.
