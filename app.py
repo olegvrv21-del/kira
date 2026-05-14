@@ -1122,6 +1122,29 @@ async def agent_endpoint(req: AgentRequest, request: Request):
             agent_store.save_session(sid, hist, model, title, owner_id=user_id)
         except Exception as e:
             print(f"[agent_store] save failed: {e}")
+        # Fire-and-forget auto-title: a small model produces a 4-6 word title
+        # from the first user+assistant pair. Only runs once per session
+        # (when the title still equals derive_title), respects KIRA_AUTOTITLE=0,
+        # never raises.
+        try:
+            import agent_titler
+            if agent_titler.should_retitle(title, hist):
+                async def _retitle(_sid: str, _hist: list, _owner: str | None) -> None:
+                    try:
+                        from agent_runtime import _llm_one_shot
+                        new_title = await agent_titler.propose_title(
+                            _hist, _llm_one_shot,
+                            model=os.environ.get("KIRA_AUTOTITLE_MODEL", "haiku"),
+                            api_key=key_pool.current() or KIRO_API_KEY,
+                        )
+                        if new_title:
+                            agent_store.rename_session(_sid, new_title, owner_id=_owner)
+                    except Exception as ex:
+                        print(f"[autotitle] failed: {ex}")
+                import asyncio as _asyncio_at
+                _asyncio_at.create_task(_retitle(sid, list(hist), user_id))
+        except Exception as ex:
+            print(f"[autotitle] dispatch failed: {ex}")
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
