@@ -133,19 +133,23 @@ export function initExperiments() {
     });
   }
 
+  // Display order for known statuses; anything else gets appended in the
+  // order it was first seen. Keeps the summary stable when only known
+  // statuses are present, but does not hide unexpected ones.
+  const STATUS_ORDER = ['green', 'red', 'mixed', 'opened', 'open', 'closed', 'timeout', 'aborted'];
+
   function summarize(rows) {
-    const counts = { green: 0, red: 0, opened: 0, timeout: 0, other: 0 };
+    const counts = new Map();
     rows.forEach(r => {
       const s = (r.status || '').toLowerCase();
-      if (counts[s] !== undefined) counts[s]++;
-      else if (s) counts.other++;
+      if (!s) return;
+      counts.set(s, (counts.get(s) || 0) + 1);
     });
+    const seen = Array.from(counts.keys());
+    const ordered = STATUS_ORDER.filter(s => counts.has(s))
+      .concat(seen.filter(s => !STATUS_ORDER.includes(s)));
     const parts = [`всего: ${rows.length}`];
-    if (counts.green)   parts.push(`green: ${counts.green}`);
-    if (counts.red)     parts.push(`red: ${counts.red}`);
-    if (counts.opened)  parts.push(`opened: ${counts.opened}`);
-    if (counts.timeout) parts.push(`timeout: ${counts.timeout}`);
-    if (counts.other)   parts.push(`other: ${counts.other}`);
+    ordered.forEach(s => parts.push(`${s}: ${counts.get(s)}`));
     return parts.join(' · ');
   }
 
