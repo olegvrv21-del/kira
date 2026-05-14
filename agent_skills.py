@@ -104,6 +104,13 @@ def create_skill(name: str, description: str, body: str) -> dict:
     if len(body.encode("utf-8")) > 20 * 1024:
         return {"ok": False, "error": "body too large (>20 KiB)"}
 
+    # Content safety scan (regex-based; no LLM call). Blocks prompt-injection,
+    # RCE patterns, secret-file reads, ~/.ssh backdoors, fork-bombs, etc.
+    import agent_skill_scanner
+    scan = agent_skill_scanner.scan(name, description, body)
+    if scan.decision == "block":
+        return {"ok": False, "error": f"skill content rejected by scanner: {scan.reason} (code={scan.code})"}
+
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Path safety: rebuild `name` character-by-character from a constant
@@ -130,7 +137,10 @@ def create_skill(name: str, description: str, body: str) -> dict:
 
     front = "---\nname: " + safe_name + "\ndescription: " + description + "\n---\n\n"
     target.write_text(front + body.strip() + "\n", encoding="utf-8")
-    return {"ok": True, "file": target.name}
+    out = {"ok": True, "file": target.name}
+    if scan.decision == "warn":
+        out["warning"] = f"{scan.reason} (code={scan.code})"
+    return out
 
 
 def render_skills_section() -> str:
