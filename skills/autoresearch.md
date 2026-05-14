@@ -92,11 +92,18 @@ LOOP:
   5. Append a row to ~/notebook/experiments.tsv with status=opened:
        ts<TAB>tag<TAB>idea<TAB>pr_number<TAB>opened<TAB><TAB><TAB><notes>
 
-  6. Wait 60 seconds (sleep via execute_bash), then poll CI:
+  6. Immediately poll CI (no pre-sleep — gh CLI returns after push so
+     the workflow is already starting):
        prod_observe({what: "ci_status", pr: <PR_NUMBER>})
      This returns rollup: "green" | "red" | "pending" | "mixed" | "none".
-     If pending, sleep 30s and poll again. Give up after ~5 minutes total
-     polling (status=timeout).
+     If rollup is "pending" or "none", sleep ~15 seconds via execute_bash,
+     then poll again. Repeat. After at most ~5 minutes total polling, log
+     status=timeout.
+
+     IMPORTANT: do not sleep more than ~15 seconds at a time. Long sleeps
+     (60+ seconds) can starve the agent loop and cause the session to
+     terminate before you record results. Many short sleeps with a poll
+     between each are correct.
 
   7. Decide based on the final rollup:
        - rollup == "green" → status="green". Oleg will merge in the morning.
@@ -197,7 +204,7 @@ Idea: "agent_store.list_sessions has no test for owner_id=None when there are ze
 4. `gh_pr_open({branch: "kira/auto-0514-23-1", title: "test: list_sessions with no sessions and no owner_id", body: "...", files: {"tests/test_agent_store_empty.py": "<full content>"}})`.
 5. TSV row with status=opened.
 6. Sleep 90s, check via `prod_observe` git_log — PR not merged yet (expected).
-7. Sleep 60s, then `prod_observe({what: "ci_status", pr: <N>})`. If `rollup == "pending"`, sleep 30s, poll again. After at most ~5 minutes of polling, you will have a final rollup.
+7. Poll `prod_observe({what: "ci_status", pr: <N>})` right away. If rollup is `pending` or `none`, `sleep 15`, poll again. Continue until rollup is `green`, `red`, `mixed`, or you have polled for ~5 minutes total (timeout).
 8. Final rollup `green` → log `green` in the TSV. Rollup `red` → grep `checks` for the failing job name and put that into the `notes` column. Rollup `timeout` → log `timeout`.
 9. Done. GOTO 1.
 
