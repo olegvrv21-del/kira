@@ -22,17 +22,40 @@ SKILLS_DIR = Path(__file__).parent / "skills"
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
 
-def _parse(text: str) -> tuple[dict[str, str], str]:
+def _parse(text: str) -> tuple[dict, str]:
+    """Parse YAML-ish frontmatter. Values are usually str; allowed-tools is list[str]."""
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}, text
     meta_block, body = m.group(1), m.group(2)
-    meta: dict[str, str] = {}
-    for line in meta_block.splitlines():
+    meta: dict = {}
+    lines = meta_block.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if ":" not in line:
+            i += 1
             continue
         k, v = line.split(":", 1)
-        meta[k.strip()] = v.strip()
+        key = k.strip()
+        val = v.strip()
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1].strip()
+            meta[key] = [x.strip() for x in inner.split(",") if x.strip()] if inner else []
+        elif val == "":
+            items = []
+            j = i + 1
+            while j < len(lines) and lines[j].lstrip().startswith("-"):
+                items.append(lines[j].lstrip()[1:].strip())
+                j += 1
+            if items:
+                meta[key] = items
+                i = j
+                continue
+            meta[key] = ""
+        else:
+            meta[key] = val
+        i += 1
     return meta, body
 
 
@@ -48,7 +71,11 @@ def list_skills() -> list[dict[str, str]]:
             continue
         name = meta.get("name") or p.stem
         desc = meta.get("description") or ""
-        out.append({"name": name, "description": desc, "file": p.name})
+        entry: dict = {"name": name, "description": desc, "file": p.name}
+        at = meta.get("allowed-tools")
+        if isinstance(at, list) and at:
+            entry["allowed_tools"] = [str(x) for x in at]
+        out.append(entry)
     return out
 
 
@@ -77,7 +104,7 @@ def load_skill(name: str) -> str | None:
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 
 
-def create_skill(name: str, description: str, body: str) -> dict:
+def create_skill(name: str, description: str, body: str, allowed_tools: list[str] | None = None) -> dict:
     """Create a new skill file at SKILLS_DIR/<name>.md.
 
     Returns {"ok": True, "file": "<path>"} on success, or
@@ -135,7 +162,22 @@ def create_skill(name: str, description: str, body: str) -> dict:
     if target.exists():
         return {"ok": False, "error": f"skill '{safe_name}' already exists"}
 
-    front = "---\nname: " + safe_name + "\ndescription: " + description + "\n---\n\n"
+    at_line = ""
+    if allowed_tools is not None:
+        if not isinstance(allowed_tools, list) or not all(isinstance(t, str) for t in allowed_tools):
+            return {"ok": False, "error": "allowed_tools must be a list of strings"}
+        cleaned = []
+        for t in allowed_tools:
+            t = t.strip()
+            if not t:
+                continue
+            if not _re.match(r"^[a-z][a-z0-9_]{0,40}$", t):
+                return {"ok": False, "error": f"invalid tool name in allowed_tools: {t!r}"}
+            cleaned.append(t)
+        if cleaned:
+            at_line = "allowed-tools: [" + ", ".join(cleaned) + "]\n"
+
+    front = "---\nname: " + safe_name + "\ndescription: " + description + "\n" + at_line + "---\n\n"
     target.write_text(front + body.strip() + "\n", encoding="utf-8")
     out = {"ok": True, "file": target.name}
     if scan.decision == "warn":
@@ -153,6 +195,8 @@ def render_skills_section() -> str:
         lines.append("<skill>")
         lines.append(f"<name>{s['name']}</name>")
         lines.append(f"<description>{s['description']}</description>")
+        if s.get("allowed_tools"):
+            lines.append("<allowed-tools>" + ", ".join(s["allowed_tools"]) + "</allowed-tools>")
         lines.append('<activate>load_skill name="' + s["name"] + '"</activate>')
         lines.append("</skill>")
     lines.append("</available_skills>")
