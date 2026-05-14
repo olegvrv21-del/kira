@@ -496,6 +496,22 @@ async def agent_plan_get(sid: str, request: Request):
     return p if isinstance(p, dict) else {"items": []}
 
 
+@app.get("/agent/experiments")
+async def agent_experiments_list(request: Request):
+    """Return parsed ~/notebook/experiments.tsv for the Experiments UI tab.
+
+    Read-only. No auth gate beyond the existing cookie check on the page
+    — the file lives on disk and is appended by the autoresearch loop
+    (see skills/autoresearch.md). Same trust boundary as /agent/actions.
+    """
+    # Touch user_id only so unauthenticated requests fail at the auth layer
+    # (consistent with sibling endpoints).
+    agent_auth.current_user_id(request)
+    import agent_experiments
+
+    return agent_experiments.load()
+
+
 @app.get("/agent/actions")
 async def agent_actions(request: Request, sid: str | None = None, limit: int = 200):
     uid = agent_auth.current_user_id(request)
