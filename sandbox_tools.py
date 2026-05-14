@@ -1479,6 +1479,11 @@ def run_tool(name: str, args: dict[str, Any], cwd: str, sid: str) -> tuple[str, 
     fn = TOOLS.get(name)
     if fn is None:
         return "error", f"unknown tool: {name}", None
+    # Pre-call authorization (guardrails). Same logic as host run_tool.
+    import agent_guardrails
+    decision = agent_guardrails.evaluate(name, args)
+    if not decision.allow:
+        return "error", f"GUARDRAIL DENIED: {decision.reason} (code={decision.code})", None
     try:
         result = fn(args, cwd, sid)
         if isinstance(result, tuple):
