@@ -1,146 +1,187 @@
 ---
 name: autoresearch
-description: Karpathy-style autonomous experiment loop. Use overnight or when Oleg says "go improve yourself" — pick one TODO, branch, change, test, measure, keep-or-revert, log to experiments.tsv, repeat. Hard 15-minute budget per experiment.
-allowed-tools: [execute_bash, fs_read, fs_write, grep, self_status, propose_improvement, gh_pr_open, prod_observe]
+description: Karpathy-style autonomous experiment loop, adapted for Kira's sandbox. Use overnight or when Oleg says "go improve yourself". Pick a TODO, write a PR via gh_pr_open, watch CI, log to ~/notebook/experiments.tsv. CI is the only metric. 15-minute budget per experiment.
+allowed-tools: [execute_bash, fs_read, fs_write, grep, glob, self_status, propose_improvement, gh_pr_open, prod_observe]
 ---
 
-# autoresearch — autonomous self-improvement loop
+# autoresearch — autonomous self-improvement loop (Kira edition)
 
-This skill is a port of the pattern from karpathy/autoresearch (May 2026). The idea: take open-ended self-improvement work and turn it into a disciplined experimental loop with one numeric metric, a hard time budget, and a TSV journal.
+Port of the karpathy/autoresearch pattern (May 2026), adapted to Kira's real toolbelt. Karpathy's agent had local `git checkout`, `git reset`, and a 5-min training script. Kira has none of that — she runs inside a Docker sandbox with no access to the host webchat repo. The PR pipeline IS her loop.
 
-Use this when:
+Use when:
 - Oleg says "поработай ночью" / "let's run autoresearch" / "improve yourself for N hours"
-- You have an empty queue and several candidate TODOs in `~/notebook/TODO.md`
-- You want to make many small experiments cheaply rather than one big speculative change
+- TODO queue has several small candidate items in `~/notebook/TODO.md`
+- You want many small honest experiments, not one big speculative change
 
-Do NOT use this for:
-- Bug fixes triggered by Oleg in real-time (those are immediate, not experimental)
-- Anything that touches money, auth, or guardrails (those need human review every step, not a loop)
+Do NOT use for:
+- Bug fixes triggered by Oleg in real time
+- Anything that touches money, auth, guardrails, .frozen, workflows
 
 ## Setup (once per session)
 
-1. **Agree on a session tag** with Oleg. If Oleg is asleep, use today's date + hour, e.g. `0514-23` for May 14, 23:00 UTC.
-2. **Create the session branch off main**: `git checkout main && git pull && git checkout -b kira/auto-<tag>`. If branch already exists, suffix `-2`, `-3`, etc.
-3. **Initialise the experiment journal** at `~/notebook/experiments.tsv` if it does not yet exist. Header (tab-separated, NOT comma-separated):
+1. **Agree on a session tag** with Oleg. If asleep, use date+hour, e.g. `0514-23`.
+2. **Check the experiments journal** at `~/notebook/experiments.tsv`. Create with this header if missing (TAB-separated, NOT comma):
    ```
-   ts	branch	sha_before	sha_after	tests_before	tests_after	cov_before	cov_after	lint_before	lint_after	status	pr	description
+   ts	tag	idea	pr	status	ci	tests_after	notes
    ```
-4. **Record baseline**: run `self_status` and `execute_bash` for `python -m pytest -q | tail -3` + `python -m ruff check . 2>&1 | tail -1`. Append a `baseline` row to the TSV with status `baseline`.
-5. **Confirm setup OK**: one short message to Oleg via the chat (he may be asleep — that's fine, just leave a trace in JOURNAL.md).
+3. **Read baseline state** via `self_status({})`. Note current SHA, test count, coverage. Save in your head, NOT in TSV (no baseline row — too easy to confuse with experiments).
+4. **Skim** `~/notebook/TODO.md` and last 200 lines of `~/notebook/JOURNAL.md` so you know what's already been tried recently.
+
+## What Kira CAN do (only these — that's the whole point of allowed-tools)
+
+| Tool | Purpose |
+|---|---|
+| `fs_read` / `grep` / `glob` | inspect files in your sandbox copy of the codebase |
+| `execute_bash` | run things inside the sandbox (lint, ruff, simple python tests) |
+| `self_status` | get current prod SHA, test count, coverage |
+| `prod_observe` | watch prod `git_log` to see what merged, `journalctl` for runtime errors |
+| `gh_pr_open` | the ONLY way to actually change the codebase. files map: {path: full new content} |
+| `propose_improvement` | write a markdown note to `~/notebook/proposals/` when an idea needs human judgement before code |
+| `fs_write` | edit `~/notebook/experiments.tsv` and your own TODO scratchpads |
+
+## What Kira CANNOT do
+
+- Run `pytest` against the real codebase (sandbox does not have it)
+- Run `git checkout -b`, `git commit`, `git reset` — none of these touch host
+- Merge PRs (`gh pr merge`) — only Oleg merges
+- Push directly to `main` (`gh_pr_open` enforces `kira/*` branch prefix)
+- Edit `.github/workflows/`, `.frozen`, anything under `~/kira-vault/`
+- Add pip dependencies
+- Disable guardrails / scanner / kill-switch
 
 ## The experiment loop
 
-After setup, run forever until interrupted:
+Repeat until interrupted:
 
 ```
 LOOP:
-  1. Read ~/notebook/TODO.md + tail of ~/notebook/JOURNAL.md (last 200 lines)
-  2. Pick ONE small idea. Prefer items already marked as small or low-risk.
-     If TODO is empty, call propose_improvement on a recent transcript.
-  3. Decide budget: 15 minutes wall clock max for code + test.
-  4. Make the change. Single concept. Single file when possible.
-  5. git add -A && git commit -m "exp: <one-line description>"
-     Record the new SHA.
-  6. Run tests: python -m pytest -q --timeout=300 > /tmp/run.log 2>&1
-     If grep "^==.* passed" /tmp/run.log returns nothing → status=crash.
-  7. Read metrics:
-     - tests passed/failed (grep "passed" /tmp/run.log)
-     - lint clean? (python -m ruff check . | tail -1)
-     - coverage delta if available
-  8. Decide:
-     - tests went up (more passing) AND lint same-or-better → status=keep, advance
-     - tests stayed equal but code is simpler (fewer LOC) → status=keep
-     - tests dropped OR new lint errors → status=discard, git reset --hard HEAD~1
-     - run failed → status=crash, git reset --hard HEAD~1
-  9. Append row to ~/notebook/experiments.tsv
- 10. If status=keep and the change is non-trivial (>20 LOC or touches public
-     API), open a PR with gh_pr_open. Otherwise stay on the branch and
-     accumulate small wins for one batch PR at the end.
- 11. Append a 3-line entry to JOURNAL.md: timestamp, what tried, result.
- 12. GOTO 1
+  1. Pick ONE small idea from TODO.md or your last propose_improvement.
+     Bias toward: missing tests, documentation, small refactors, low-LOC fixes.
+     Skip: anything you cannot defend in one paragraph.
+
+  2. fs_read the file you want to change. Read enough context to be sure.
+
+  3. Plan the change in your head. Single concept. One commit.
+
+  4. Open a PR via gh_pr_open:
+       branch="kira/auto-<tag>-N"   (N = sequence number this session)
+       title="<imperative one-line>"
+       body=<motivation + what changed + risk>
+       files={path: full_new_content}
+
+  5. Append a row to ~/notebook/experiments.tsv with status=opened:
+       ts<TAB>tag<TAB>idea<TAB>pr_number<TAB>opened<TAB><TAB><TAB><notes>
+
+  6. Wait 60-90 seconds (sleep via execute_bash if needed), then
+     prod_observe to check: did the PR run CI? You will see the PR number
+     in the response. CI status is best observed by waiting + retrying.
+     Use prod_observe({what: "git_log", n: 5}) to see if it merged.
+
+  7. Decide based on CI:
+       - All checks green → status="green", note the PR number. Oleg will
+         decide whether to merge in the morning.
+       - Any check red    → status="red", read the failing job's name via
+         prod_observe({what: "journalctl"}) if it concerns webchat
+         service; otherwise just note "see PR".
+       - Timed out        → status="timeout" after 5 minutes of polling.
+
+  8. Update the row in experiments.tsv with the final status.
+
+  9. Append a 3-line entry to JOURNAL.md: timestamp, what tried, result.
+
+ 10. GOTO 1
 ```
 
-## Metrics — keep it numeric
+**Important**: a green PR is NOT a "keep" decision — only Oleg merges. Your job is to produce honest, well-tested, well-described PRs. Each PR is one numeric outcome (CI green/red).
 
-The only thing that decides keep vs discard is a number. No vibes. Available signals in order of priority:
+## Hard time budget
 
-1. **`tests_after > tests_before`** — strongest signal. New test passing means new behaviour locked in.
-2. **`lint_after <= lint_before`** — never regress lint count.
-3. **`cov_after >= cov_before`** — coverage non-decreasing.
-4. **LOC delta** — fewer lines for equal-or-better metrics is a `keep`. Karpathy's simplicity criterion.
-5. **healthz still 200** — `curl -s http://localhost:3000/healthz` after rsync if you pushed to prod.
+15 minutes per experiment from idea-pick to TSV-write. If picking the idea takes more than 3 minutes, the idea is too big — skip to a simpler one. If CI takes more than 5 minutes, mark `timeout` and move on; do not block the loop on one slow run.
 
-If metrics conflict (e.g. +1 test, -2 LOC, +1 lint error), discard. Strict mode.
+## Metrics — what counts
 
-## Time budget
+There is only one numeric signal in Kira's sandbox: **CI status**.
 
-Hard 15 minutes per experiment, including thinking time. If you find yourself debugging the same crash for more than two attempts, mark it `crash`, revert, and move on. Do not fall into rabbit holes overnight.
+- `green` = all 6 checks pass (lint, pytest, CodeQL python, CodeQL js, Analyze, squash-merge)
+- `red`   = at least one check failed
+- `timeout` = waited too long
 
-Total session budget: assume Oleg sleeps 8 hours. At ~15 min/experiment that's ~30 experiments. Plan accordingly — pick a mix of easy wins (test additions, docstrings, small refactors) and one or two interesting risks per session.
+You do not have access to `pytest -q` output directly. You see CI as a yes/no. If a PR is red, you can `prod_observe` the journalctl for any clues but mostly you just learn "this approach broke something" and move on.
 
-## What you CAN edit
+Coverage delta, test count delta, lint count delta — these are visible only in PR comments or after merge. Out of scope for one experiment.
 
-Anything in `~/webchat/` that you would normally touch in a PR, with these limits:
-- prefer `tests/`, `agent_*.py` helpers, `sandbox_tools.py` documentation, README files
-- avoid: `agent_guardrails.py`, `agent_skill_scanner.py`, auth code, anything in `.github/workflows/`
+## TSV format
 
-## What you CANNOT do in autoresearch mode
+8 columns, tab-separated:
 
-- Direct push to `main` (use PRs only, even on this branch)
-- Run `gh pr merge` yourself — Oleg merges in the morning
-- Disable guardrails, scanner, or the kill-switch
-- Add new pip dependencies
-- Modify `.frozen`, `.github/workflows/`, or anything under `~/kira-vault/`
-- Send messages to external services beyond what `prod_observe` already does
+```
+ts	tag	idea	pr	status	ci	tests_after	notes
+```
 
-## Status logging — TSV format
-
-Status values (third-to-last column):
-- `baseline` — only the first row, records starting state
-- `keep` — metrics improved or stayed equal with simpler code, change retained
-- `discard` — metrics regressed, change reverted
-- `crash` — pytest crashed or never reported, reverted
-- `pr` — change was significant enough to open its own PR (PR number in the `pr` column)
-- `skip` — idea evaluated and not worth trying, no commit made
-
-Use 7-char short SHAs. Use `.6f` for floats. Empty string for non-applicable cells.
+1. `ts` — ISO 8601 UTC, e.g. `2026-05-14T23:14:22Z`
+2. `tag` — session tag, e.g. `0514-23`
+3. `idea` — short slug, e.g. `add-test-list-sessions-empty`
+4. `pr` — PR number (integer), or empty string before the PR is opened
+5. `status` — `opened` | `green` | `red` | `timeout` | `aborted`
+6. `ci` — same as status when ci has run, otherwise empty
+7. `tests_after` — only filled in if the PR merged (rare during a session); usually empty
+8. `notes` — one line, no tabs, e.g. `lint failure in line 42 — bad regex escape`
 
 Example:
-```
-ts	branch	sha_before	sha_after	tests_before	tests_after	cov_before	cov_after	lint_before	lint_after	status	pr	description
-2026-05-14T23:00:00	kira/auto-0514-23	0886eec	0886eec	995	995	93.5	93.5	0	0	baseline		baseline
-2026-05-14T23:14:22	kira/auto-0514-23	0886eec	a1b2c3d	995	998	93.5	93.6	0	0	keep		add 3 tests for agent_store.list_sessions edge cases
-2026-05-14T23:31:08	kira/auto-0514-23	a1b2c3d	a1b2c3d	998	995	93.6	93.5	0	2	discard		try removing _owner_ok shortcut — broke 3 tests
-```
-
-## Reporting in the morning
-
-Before Oleg wakes up (target 06:00 UTC), produce a short summary at the top of JOURNAL.md:
 
 ```
-## Autoresearch session 2026-05-14 23:00 → 2026-05-15 06:00
-- 28 experiments total: 11 keep, 14 discard, 2 crash, 1 pr
-- tests: 995 → 1019 (+24)
-- coverage: 93.5% → 94.1%
-- lint: 0 → 0
-- PR opened: #23 (refactor agent_store helpers)
-- Most interesting finding: <one-sentence>
-- Worth investigating next: <one-sentence>
+ts	tag	idea	pr	status	ci	tests_after	notes
+2026-05-14T23:14:22Z	0514-23	add-test-list-sessions-empty	26	green	green		3 tests added covering empty owner_id
+2026-05-14T23:31:08Z	0514-23	rename-confusing-var-in-store	27	red	red		test_store_persistence broke — undid the rename in my head and retried as PR 28
+2026-05-14T23:48:55Z	0514-23	docstring-agent-titler	28	green	green		pure docstring change
 ```
-
-This is the artefact Oleg reads. Make it scannable.
 
 ## Stopping conditions
 
 Stop the loop only if:
-- 5+ consecutive experiments crashed → infrastructure broke, stop and write a triage note
-- `.frozen` file appears → kill-switch tripped, stop immediately
+- `.frozen` file appears (Oleg tripped the kill-switch) → stop immediately
 - `~/notebook/STOP_AUTORESEARCH` file exists → polite stop signal from Oleg
-- Disk over 90% full → stop and clean up
-- Tests baseline drops below 950 → something seriously broke, stop
+- 5 consecutive `red` CI results → something is fundamentally broken in your understanding; write a triage note via `propose_improvement` and stop
+- 3 consecutive `timeout` results → CI infrastructure is slow/broken; stop
+- Disk shows >90% via `prod_observe({what: "df"})` → stop
 
-Otherwise keep going. The whole point is that you do not pause to ask. Oleg will read the journal in the morning.
+Otherwise, do NOT pause to ask "should I continue?". The whole point is autonomy. Oleg reads the morning summary.
+
+## Morning summary
+
+Before 06:00 UTC (or whenever the loop ends), produce one summary block at the TOP of `~/notebook/JOURNAL.md`:
+
+```
+## Autoresearch session <tag> — <start_ts> → <end_ts>
+- N experiments: G green, R red, T timeout
+- PRs opened: #X, #Y, #Z
+- Most useful PR (if any): #X — <one-sentence reason>
+- Things you tried that did not work: <one-sentence per>
+- Worth investigating next: <one-sentence>
+```
+
+Make it scannable. Oleg reads this first thing.
+
+## A worked example
+
+Idea: "agent_store.list_sessions has no test for owner_id=None when there are zero sessions."
+
+1. `fs_read` `agent_store.py`, find `list_sessions`. Skim signature.
+2. `fs_read` `tests/test_agent_store.py` (or wherever). See test style.
+3. Write a new test in your head. 8 lines.
+4. `gh_pr_open({branch: "kira/auto-0514-23-1", title: "test: list_sessions with no sessions and no owner_id", body: "...", files: {"tests/test_agent_store_empty.py": "<full content>"}})`.
+5. TSV row with status=opened.
+6. Sleep 90s, check via `prod_observe` git_log — PR not merged yet (expected).
+7. Sleep 60s, check again. Try to look at the PR via `execute_bash` if `gh` is available in your sandbox — usually it is not, so accept "no news = still pending".
+8. After ~3 minutes, if no error landed via journalctl, mark status=green tentatively (you cannot read CI from sandbox; rely on Oleg in the morning to flag any red PRs).
+9. Done. GOTO 1.
+
+The slight catch: from inside sandbox you cannot directly see CI status. The accurate signal is whether the PR ended up in `prod_observe({what: "git_log", n: 20})` (Oleg merged it) — but that takes hours, not minutes. So `green` in your TSV during a session means "PR opened cleanly, no obvious build error visible in journalctl, awaiting human merge". This is a known limitation; if Oleg later wants real CI integration, that is a separate PR adding a `ci_status` tool.
 
 ## Why this skill exists
 
-Karpathy showed that one good `program.md` + one well-scoped change surface + one numeric metric + one TSV is enough for an LLM to do useful autonomous research. Kira's analogue is: this skill + Kira's repo + (tests, coverage, lint) + experiments.tsv. The hard part is not the loop — it is the discipline of writing one number to a TSV after every try. That number is what makes the difference between "agent did stuff overnight" and "agent measurably improved".
+Karpathy showed that one good `program.md` + one numeric metric + one TSV is enough for an LLM to run useful overnight loops. Kira's version is the same shape, with two adjustments forced by sandbox isolation:
+- **Single metric becomes CI green/red** instead of `val_bpb` — coarser, but honest
+- **Loop interface is `gh_pr_open`** instead of `git commit` — every experiment is a PR Oleg can review
+
+This is intentional. The point is honest, reviewable experiments, not local cleverness.
