@@ -96,14 +96,20 @@ LOOP:
      the workflow is already starting):
        prod_observe({what: "ci_status", pr: <PR_NUMBER>})
      This returns rollup: "green" | "red" | "pending" | "mixed" | "none".
-     If rollup is "pending" or "none", sleep ~15 seconds via execute_bash,
-     then poll again. Repeat. After at most ~5 minutes total polling, log
-     status=timeout.
 
-     IMPORTANT: do not sleep more than ~15 seconds at a time. Long sleeps
-     (60+ seconds) can starve the agent loop and cause the session to
-     terminate before you record results. Many short sleeps with a poll
-     between each are correct.
+     **CRITICAL — DO NOT USE `sleep`.** Long or even short sleeps cause
+     the agent loop to terminate before you record results (observed in
+     drills 2 and 3 — sleep 60 AND sleep 15 both broke the session).
+
+     If rollup is `pending` or `none`, call `prod_observe ci_status`
+     AGAIN IMMEDIATELY (no sleep, no narration, no "let me wait" text
+     between calls — just the next tool_call). Each `ci_status` round-trip
+     takes ~2-3s naturally; that is your rate limit. Repeat up to 30
+     times. If still pending after 30 polls, log status=timeout.
+
+     Between polls you MAY write a single short status line like
+     "poll N: pending" — but you MUST emit the next tool_call in the
+     same turn. Never end a turn with rollup=pending.
 
   7. Decide based on the final rollup:
        - rollup == "green" → status="green". Oleg will merge in the morning.
@@ -204,7 +210,7 @@ Idea: "agent_store.list_sessions has no test for owner_id=None when there are ze
 4. `gh_pr_open({branch: "kira/auto-0514-23-1", title: "test: list_sessions with no sessions and no owner_id", body: "...", files: {"tests/test_agent_store_empty.py": "<full content>"}})`.
 5. TSV row with status=opened.
 6. Sleep 90s, check via `prod_observe` git_log — PR not merged yet (expected).
-7. Poll `prod_observe({what: "ci_status", pr: <N>})` right away. If rollup is `pending` or `none`, `sleep 15`, poll again. Continue until rollup is `green`, `red`, `mixed`, or you have polled for ~5 minutes total (timeout).
+7. Poll `prod_observe({what: "ci_status", pr: <N>})` right away. If rollup is `pending` or `none`, call `ci_status` AGAIN IMMEDIATELY (no `sleep`!). Repeat up to 30 polls. Continue until rollup is `green`, `red`, `mixed`, or 30 polls elapsed (timeout).
 8. Final rollup `green` → log `green` in the TSV. Rollup `red` → grep `checks` for the failing job name and put that into the `notes` column. Rollup `timeout` → log `timeout`.
 9. Done. GOTO 1.
 
