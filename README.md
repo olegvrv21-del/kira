@@ -76,7 +76,7 @@ Docker sandboxes.
 ## Tools (38)
 
 | Category   | Tools                                                                                                                                                              |
-|------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Shell / FS | `execute_bash`, `fs_read`, `fs_write`, `patch`, `glob`, `grep`, `keyword_search`, `change_dir`                                                                     |
 | Code intel | `outline`, `find_definition`, `find_references`, `rename_symbol`, `diagnostics`, `lint`                                                                            |
 | Execution  | `run_tests`, `verify_change`, `dev_loop`, `coverage_status`, `review_changes`                                                                                      |
