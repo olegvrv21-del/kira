@@ -871,6 +871,24 @@ async def run_agent(
                 yield _sse({"type": "done"})
                 return
 
+            # Summarize older context if it crossed the threshold. This runs
+            # AT MOST once per turn, in-place; tool_use/tool_result pairs
+            # are kept together (see agent_summarizer.pick_summarize_range).
+            try:
+                import agent_summarizer
+                if agent_summarizer.should_summarize(messages):
+                    did = await agent_summarizer.summarize(
+                        messages,
+                        llm_one_shot=_llm_one_shot,
+                        api_key=key_pool.current() or api_key,
+                    )
+                    if did:
+                        _sync_history_dict()
+                        yield _sse({"type": "info", "message": "context-summarized"})
+            except Exception as _sumex:
+                # Never fail a turn over summarizer.
+                print(f"[summarizer] error: {_sumex}")
+
             text_chunks: list[str] = []
             tool_calls_emitted: list = []  # list[ToolCall]
             message_id: str | None = None
