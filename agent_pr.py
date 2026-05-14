@@ -154,9 +154,13 @@ def open_pr(
         if rc != 0:
             return {"ok": False, "error": f"pr create failed: {e.strip()[:300]}"}
         url = out.strip().splitlines()[-1] if out.strip() else ""
+        import re as _re
+        m = _re.search(r"/pull/(\d+)", url)
+        pr_number = int(m.group(1)) if m else None
         return {
             "ok": True,
             "url": url,
+            "pr": pr_number,
             "branch": branch,
             "base": base,
             "duration_seconds": None,
