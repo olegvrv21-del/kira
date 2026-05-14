@@ -182,7 +182,11 @@ export function createAgentRunner(opts) {
                 bar = document.createElement('div');
                 bar.className = 'tool-critic';
                 bar.style.cssText = 'margin:6px 0;padding:6px 10px;border-radius:6px;font-size:12px;';
-                card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                {
+                  const ref = card.querySelector('.out-wrap');
+                  if (ref && ref.parentNode === card) card.insertBefore(bar, ref);
+                  else card.appendChild(bar);
+                }
               }
               const ok = j.verdict !== 'BLOCK';
               bar.style.background = ok ? 'rgba(76,175,80,0.10)' : 'rgba(255,82,82,0.10)';
@@ -202,7 +206,11 @@ export function createAgentRunner(opts) {
                 bar = document.createElement('div');
                 bar.className = 'dev-loop';
                 bar.style.cssText = 'margin:8px 0;padding:8px 10px;background:rgba(126,87,194,0.08);border-left:3px solid #7e57c2;border-radius:4px;font-size:12px;font-family:monospace;';
-                card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                {
+                  const ref = card.querySelector('.out-wrap');
+                  if (ref && ref.parentNode === card) card.insertBefore(bar, ref);
+                  else card.appendChild(bar);
+                }
               }
               const line = document.createElement('div');
               if (j.type === 'dev_loop_iter') {
@@ -227,7 +235,11 @@ export function createAgentRunner(opts) {
                 bar = document.createElement('div');
                 bar.className = 'tool-hooks';
                 bar.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin:4px 0;font-size:11px;';
-                card.insertBefore(bar, card.querySelector('.out-wrap') || null);
+                {
+                  const ref = card.querySelector('.out-wrap');
+                  if (ref && ref.parentNode === card) card.insertBefore(bar, ref);
+                  else card.appendChild(bar);
+                }
               }
               const badge = document.createElement('span');
               const at = j.action_type;
