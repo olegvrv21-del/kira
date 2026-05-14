@@ -872,7 +872,7 @@ async def proposals_create(request: Request, body: dict | None = None):
         sid = sess.get("sid") if isinstance(sess, dict) else None
         if not sid:
             continue
-        msgs = agent_store.load_session(sid) or []
+        msgs = agent_store.load_history(sid) or []
         last_user = None
         for m in msgs:
             role = m.get("role")
