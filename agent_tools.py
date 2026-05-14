@@ -533,6 +533,15 @@ def load_skill_tool(args: dict[str, Any], cwd: str) -> str:
     if body is None:
         skills = [s["name"] for s in agent_skills.list_skills()]
         raise ValueError(f"unknown skill {name!r}. Available: {skills}")
+    # Append advisory tool-policy footer if this skill declared allowed-tools.
+    meta = next((s for s in agent_skills.list_skills() if s["name"] == name), None)
+    if meta and meta.get("allowed_tools"):
+        body = (
+            body
+            + "\n\n---\n_Tool policy for this skill: use only "
+            + ", ".join(meta["allowed_tools"])
+            + ". Avoid other tools unless absolutely necessary._\n"
+        )
     return body
 
 
