@@ -182,9 +182,11 @@ def test_prod_observe_dispatches_ci_status():
     checks = [{"name": "pytest", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": ""}]
     with patch.object(agent_prod, "_run", return_value=_mk_run_result(_gh_json(checks))):
         out = agent_tools.prod_observe({"what": "ci_status", "pr": 26}, cwd="/tmp")
-    parsed = json.loads(out)
-    assert parsed["ok"] is True
-    assert parsed["rollup"] == "green"
+    # post-PR #32: response is marker line + raw JSON
+    first = out.splitlines()[0]
+    assert first.startswith("OK rollup=green")
+    assert "raw response:" in out
+    assert "\"rollup\": \"green\"" in out
 
 
 def test_prod_observe_unknown_what():

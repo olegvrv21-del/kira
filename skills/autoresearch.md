@@ -62,7 +62,12 @@ Do NOT guess what happened. Do NOT invent a diagnosis. The first line of the res
 
 This rule exists because in an early drill Kira (you) opened two PRs successfully (#29 and #30, both green), then reported to Oleg "the tool failed, sandbox clone is stale, needs a fix". That was a hallucination — the PRs were real and CI passed on both. The new response format makes this mistake harder: `OK pr=N` is unambiguous.
 
-Same rule for `ci_status`: the first key to check is `rollup`. If `rollup` is missing or the response has `ok: false` then quote the error verbatim — do not paraphrase.
+Same rule for `ci_status`: the response NOW also starts with a marker line.
+
+- Success: `OK rollup=green pr=29 state=OPEN pass=6 fail=0 pending=0`
+- Failure: `ERROR: <reason>`
+
+Just read line 1. Do not parse the JSON below unless you need the per-check list (e.g. which job failed). Do not invent state. Do not paraphrase.
 
 ## The experiment loop
 
