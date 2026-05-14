@@ -103,7 +103,7 @@ def git_diff(ref: str = "HEAD~1") -> dict[str, Any]:
 REPO = "olegvrv21-del/kira"
 
 
-def ci_status(pr: int) -> dict[str, Any]:
+def ci_status(pr: int, wait: bool = False, timeout: int = 300, poll_interval: int = 8) -> dict[str, Any]:
     """Read-only CI status for a Kira PR.
 
     Returns a compact dict the agent can reason about:
@@ -128,9 +128,17 @@ def ci_status(pr: int) -> dict[str, Any]:
       - otherwise → "mixed"
 
     Argument is strictly int — no shell interpolation possible.
+
+    When `wait=True`, the function blocks server-side polling every
+    `poll_interval` seconds until rollup is not 'pending'/'none', or
+    until `timeout` seconds elapse. This is the recommended mode for
+    the agent: one tool_call replaces a fragile in-model poll loop
+    (drill 2/3/4 showed Sonnet terminates after sleep or repeated
+    pending tool_results). Adds `polls` and `waited_seconds` to result.
     """
     import json as _j
     import re
+    import time as _time
 
     try:
         n = int(pr)
@@ -139,9 +147,50 @@ def ci_status(pr: int) -> dict[str, Any]:
     if n <= 0 or n > 10_000_000:
         return {"ok": False, "error": f"pr out of range: {n}"}
 
+    # Clamp wait params (defence in depth).
+    try:
+        timeout = max(0, min(int(timeout), 600))
+    except (TypeError, ValueError):
+        timeout = 300
+    try:
+        poll_interval = max(2, min(int(poll_interval), 30))
+    except (TypeError, ValueError):
+        poll_interval = 8
+    wait = bool(wait)
+
     # Defence in depth: REPO is a constant, but verify the shape.
     if not re.fullmatch(r"[A-Za-z0-9_./-]{3,80}", REPO):
         return {"ok": False, "error": "REPO constant tampered"}
+
+    started = _time.monotonic()
+    polls = 0
+    snapshot = None
+    while True:
+        polls += 1
+        snapshot = _ci_snapshot_once(n)
+        if not snapshot.get("ok"):
+            snapshot["polls"] = polls
+            snapshot["waited_seconds"] = round(_time.monotonic() - started, 1)
+            return snapshot
+        rollup = snapshot.get("rollup")
+        if not wait:
+            break
+        if rollup not in ("pending", "none"):
+            break
+        elapsed = _time.monotonic() - started
+        if elapsed + poll_interval >= timeout:
+            snapshot["timeout"] = True
+            break
+        _time.sleep(poll_interval)
+
+    snapshot["polls"] = polls
+    snapshot["waited_seconds"] = round(_time.monotonic() - started, 1)
+    return snapshot
+
+
+def _ci_snapshot_once(n: int) -> dict[str, Any]:
+    """One-shot snapshot for `ci_status`. Pure of wait logic."""
+    import json as _j
 
     r = _run(
         ["gh", "pr", "view", str(n),

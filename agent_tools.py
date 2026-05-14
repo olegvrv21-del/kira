@@ -507,7 +507,12 @@ def prod_observe(args: dict[str, Any], cwd: str) -> str:
         ),
         "git_log": lambda: agent_prod.git_log(n=int(args.get("n") or 10)),
         "git_diff": lambda: agent_prod.git_diff(ref=args.get("ref") or "HEAD~1"),
-        "ci_status": lambda: agent_prod.ci_status(pr=int(args.get("pr") or 0)),
+        "ci_status": lambda: agent_prod.ci_status(
+            pr=int(args.get("pr") or 0),
+            wait=bool(args.get("wait", False)),
+            timeout=int(args.get("timeout") or 300),
+            poll_interval=int(args.get("poll_interval") or 8),
+        ),
     }
     fn = fns.get(what)
     if fn is None:
@@ -524,7 +529,9 @@ def prod_observe(args: dict[str, Any], cwd: str) -> str:
                 f"state={result.get('state', '?')} "
                 f"pass={result.get('n_pass', 0)} "
                 f"fail={result.get('n_fail', 0)} "
-                f"pending={result.get('n_pending', 0)}"
+                f"pending={result.get('n_pending', 0)} "
+                f"polls={result.get('polls', 1)} "
+                f"waited={result.get('waited_seconds', 0)}s"
             )
         else:
             err = (result.get("error") or "unknown error").splitlines()[0][:300]

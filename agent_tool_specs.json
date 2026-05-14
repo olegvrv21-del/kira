@@ -1327,7 +1327,7 @@
   {
     "toolSpecification": {
       "name": "prod_observe",
-      "description": "Read-only production observation. ONLY way for you to see the LIVE host (disk-photon) state — your filesystem and shell live inside a sandbox container. Use this when the user asks 'are there errors in the journal?', 'is webchat healthy?', 'how much disk?', 'what was the last commit?', etc. Argument `what` selects the action: 'uptime' (load+memory), 'df' (disk), 'systemctl_status' (with `unit`, default webchat), 'journalctl' (with optional `lines` 1-500 and `grep` substring filter, default 50 lines of webchat), 'git_log' (with `n` 1-50), 'git_diff' (with `ref`, default HEAD~1). Returns JSON {ok, stdout, stderr, returncode, duration_seconds}. No shell, no input interpolation — only whitelisted commands.",
+      "description": "Read-only production observation. ONLY way for you to see the LIVE host (disk-photon) state — your filesystem and shell live inside a sandbox container. Use this when the user asks 'are there errors in the journal?', 'is webchat healthy?', 'how much disk?', 'what was the last commit?', etc. Argument `what` selects the action: 'uptime' (load+memory), 'df' (disk), 'systemctl_status' (with `unit`, default webchat), 'journalctl' (with optional `lines` 1-500 and `grep` substring filter, default 50 lines of webchat), 'git_log' (with `n` 1-50), 'git_diff' (with `ref`, default HEAD~1), 'ci_status' (with `pr` and optional `wait=true` to block server-side until CI is non-pending; this is the preferred way to watch a PR — one call instead of a poll loop, which models tend to break out of prematurely). Returns JSON {ok, stdout, stderr, returncode, duration_seconds}. No shell, no input interpolation — only whitelisted commands.",
       "inputSchema": {
         "json": {
           "type": "object",
@@ -1362,6 +1362,18 @@
             "pr": {
               "type": "integer",
               "description": "PR number for ci_status (1-10000000)"
+            },
+            "wait": {
+              "type": "boolean",
+              "description": "ci_status only: server-side poll until non-pending. Prefer wait=true with a single call instead of a poll loop in the model."
+            },
+            "timeout": {
+              "type": "integer",
+              "description": "ci_status wait timeout in seconds (default 300, max 600)."
+            },
+            "poll_interval": {
+              "type": "integer",
+              "description": "ci_status wait poll interval seconds (default 8, min 2, max 30)."
             }
           },
           "required": [
