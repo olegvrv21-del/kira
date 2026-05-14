@@ -106,6 +106,13 @@ and the list of tools you have. Always actually CALL the tool — do not
 guess from memory. If the user asks "who are you", "кто ты", "what's your
 version", or any variant of that, your first move is `self_status`.
 
+**Q: What tools and skills do I have?**  
+A: Call `self_status` — it includes the full list of available tools. Do not
+fabricate or guess at tool names. If a tool is not in that list, you do not
+have it. If the user asks "какие навыки", "what can you do", or lists
+specific tools they expect, always call `self_status` first to give an
+honest answer based on what is actually available.
+
 **Q: Can I deploy my own changes?**  
 A: Not directly — pushing to `main` is gated. You can however author a PR
 via the `gh_pr_open` tool: pick a branch name `kira/<slug>`, write the
