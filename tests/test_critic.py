@@ -151,3 +151,36 @@ async def test_review_diff_routes_through_provider_layer(monkeypatch):
     assert len(p.calls) == 1
     roles = [m.role for m in p.calls[0]["messages"]]
     assert roles == ["system", "user"]
+
+
+@pytest.mark.asyncio
+async def test_critic_provider_override_decorrelates(monkeypatch):
+    """KIRA_CRITIC_PROVIDER must beat KIRA_LLM_PROVIDER so the reviewer can
+    run on a different model family than the author.
+
+    Setup: main LLM is the *real* `amazon-q` (which would normally route
+    through QProvider). We point the critic at `mock`. If the override
+    works, the MockProvider is called and returns our scripted BLOCK; if
+    the override is ignored, QProvider runs (and would fail or hit network).
+    """
+    p_mock = _register_mock("VERDICT: BLOCK\nREASON: caught by sibling provider")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "amazon-q")
+    monkeypatch.setenv("KIRA_CRITIC_PROVIDER", "mock")
+    agent_critic.reload_flags()
+    v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+y\n", intent="x")
+    assert v["verdict"] == "BLOCK"
+    assert v["reason"] == "caught by sibling provider"
+    assert p_mock.calls, "override-routed provider was never called"
+
+
+@pytest.mark.asyncio
+async def test_critic_override_unset_falls_back_to_llm_provider(monkeypatch):
+    """Without KIRA_CRITIC_PROVIDER set, the critic must follow KIRA_LLM_PROVIDER."""
+    p_mock = _register_mock("VERDICT: OK")
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "mock")
+    monkeypatch.delenv("KIRA_CRITIC_PROVIDER", raising=False)
+    agent_critic.reload_flags()
+    v = await agent_critic.review_diff("key", "diff --git a/x b/x\n+y\n")
+    assert v["verdict"] == "OK"
+    assert p_mock.calls
+
