@@ -22,6 +22,11 @@ from agent_keys import key_pool
 _DEFAULT_MODEL = os.environ.get("KIRA_CRITIC_MODEL", "claude-haiku-4.5")
 _AUTO = os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True")
 _MAX_DIFF = int(os.environ.get("KIRA_CRITIC_MAX_DIFF", "30000"))
+# Critic provider override. Setting this to a *different* provider than
+# KIRA_LLM_PROVIDER de-correlates author and reviewer: if the main agent
+# is on Claude, run the critic on OpenRouter/GPT/etc. so a single-model
+# blind spot cannot silently pass a bad diff. Default empty = follow main.
+_PROVIDER_OVERRIDE = os.environ.get("KIRA_CRITIC_PROVIDER", "").strip()
 
 CRITIC_SYSTEM = """You are a strict code reviewer ("the Critic") inside the Kira agent system.
 
@@ -103,8 +108,11 @@ async def review_diff(
     # Local imports keep `agent_critic` testable without httpx in the path.
     from llm import Message, get_provider
 
-    provider_name = os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
-    if provider_name == "amazon-q":
+    # Provider selection: explicit critic override beats current LLM provider.
+    # De-correlates author and reviewer when set (P1 in HANDOFF).
+    override = os.environ.get("KIRA_CRITIC_PROVIDER", "").strip()
+    provider_name = override or os.environ.get("KIRA_LLM_PROVIDER", "amazon-q")
+    if provider_name == "amazon-q" and not override:
         # Use key_pool / passed-in key explicitly so prod key rotation still wins.
         from llm.q_provider import QProvider
 
@@ -134,7 +142,8 @@ def is_auto_enabled() -> bool:
 
 
 def reload_flags() -> None:
-    global _AUTO, _DEFAULT_MODEL, _MAX_DIFF
+    global _AUTO, _DEFAULT_MODEL, _MAX_DIFF, _PROVIDER_OVERRIDE
     _AUTO = os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True")
     _DEFAULT_MODEL = os.environ.get("KIRA_CRITIC_MODEL", "claude-haiku-4.5")
     _MAX_DIFF = int(os.environ.get("KIRA_CRITIC_MAX_DIFF", "30000"))
+    _PROVIDER_OVERRIDE = os.environ.get("KIRA_CRITIC_PROVIDER", "").strip()
