@@ -42,7 +42,7 @@ jobs:
     # a needs-style guard via gh API is overkill. Keep it simple: if you push
     # red code, this still deploys -- run smoke locally before pushing.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: main
