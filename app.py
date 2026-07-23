@@ -417,6 +417,13 @@ async def agent_health():
     except Exception as e:
         _frugal_state = {"enabled": True, "error": type(e).__name__ + ": " + str(e)[:200]}
 
+    # Critic state (self-review before commit).
+    try:
+        import agent_critic
+        _critic_state = agent_critic.status()
+    except Exception as e:
+        _critic_state = {"error": type(e).__name__ + ": " + str(e)[:200]}
+
     # status classification
     status = "ok"
     reasons: list[str] = []
@@ -480,6 +487,7 @@ async def agent_health():
         },
         "llm_fallback": fallback_state,
         "frugal": _frugal_state,
+        "critic": _critic_state,
     }
 
 

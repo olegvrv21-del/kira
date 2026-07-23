@@ -184,3 +184,39 @@ async def test_critic_override_unset_falls_back_to_llm_provider(monkeypatch):
     assert v["verdict"] == "OK"
     assert p_mock.calls
 
+
+
+# ---- default model selection (Wave 2: enable critic robustly) -------------
+
+
+def test_default_critic_model_explicit(monkeypatch):
+    import agent_critic
+    monkeypatch.setenv("KIRA_CRITIC_MODEL", "my-model")
+    assert agent_critic._default_critic_model() == "my-model"
+
+
+def test_default_critic_model_claude_when_key(monkeypatch):
+    import agent_critic
+    monkeypatch.delenv("KIRA_CRITIC_MODEL", raising=False)
+    monkeypatch.setenv("KIRA_CLAUDE_KEY", "sk-claude")
+    assert agent_critic._default_critic_model() == "claude-haiku-4-5-20251001"
+
+
+def test_default_critic_model_gpt_fallback(monkeypatch):
+    import agent_critic
+    monkeypatch.delenv("KIRA_CRITIC_MODEL", raising=False)
+    monkeypatch.delenv("KIRA_CLAUDE_KEY", raising=False)
+    monkeypatch.delenv("KIRA_ENDPOINTS", raising=False)
+    assert agent_critic._default_critic_model() == "gpt-5.4-mini"
+
+
+def test_critic_status_shape(monkeypatch):
+    import agent_critic
+    monkeypatch.setenv("KIRA_CRITIC_AUTO", "1")
+    monkeypatch.setenv("KIRA_CRITIC_PROVIDER", "openrouter")
+    agent_critic.reload_flags()
+    s = agent_critic.status()
+    assert s["auto"] is True
+    assert s["provider_override"] == "openrouter"
+    assert "model" in s and "max_diff" in s
+    agent_critic.reload_flags()  # reset to env-clean state after

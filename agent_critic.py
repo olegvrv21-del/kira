@@ -19,7 +19,27 @@ import re
 
 from agent_keys import key_pool
 
-_DEFAULT_MODEL = os.environ.get("KIRA_CRITIC_MODEL", "claude-haiku-4.5")
+
+def _default_critic_model() -> str:
+    """Pick the critic model. Explicit KIRA_CRITIC_MODEL wins. Otherwise prefer
+    a cheap model that is actually live on the configured gateway: if a Claude
+    key is set use the pinned Unity2 haiku id, else fall back to the cheapest
+    OpenAI-family model. Avoids the old hard default 'claude-haiku-4.5' which
+    404s on Unity2 (needs the dated id) and is dead when acct2 is unfunded.
+    """
+    explicit = os.environ.get("KIRA_CRITIC_MODEL", "").strip()
+    if explicit:
+        return explicit
+    try:
+        from llm.endpoints import is_configured
+        if is_configured():
+            return "claude-haiku-4-5-20251001"
+    except Exception:
+        pass
+    return "gpt-5.4-mini"
+
+
+_DEFAULT_MODEL = _default_critic_model()
 _AUTO = os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True")
 _MAX_DIFF = int(os.environ.get("KIRA_CRITIC_MAX_DIFF", "30000"))
 # Critic provider override. Setting this to a *different* provider than
@@ -100,7 +120,7 @@ async def review_diff(
     """
     if not diff or not diff.strip():
         return {"verdict": "OK", "reason": "empty diff", "issues": [], "raw": ""}
-    model = model or _DEFAULT_MODEL
+    model = model or _default_critic_model()
     body_diff = _truncate(diff, _MAX_DIFF)
     user_text = "Intent: " + (intent.strip() or "(not specified)")
     user_text += "\n\nDiff to review:\n```\n" + body_diff + "\n```"
@@ -141,9 +161,19 @@ def is_auto_enabled() -> bool:
     return _AUTO
 
 
+def status() -> dict:
+    """Introspection for /agent/health."""
+    return {
+        "auto": is_auto_enabled(),
+        "model": _default_critic_model(),
+        "provider_override": _PROVIDER_OVERRIDE or None,
+        "max_diff": _MAX_DIFF,
+    }
+
+
 def reload_flags() -> None:
     global _AUTO, _DEFAULT_MODEL, _MAX_DIFF, _PROVIDER_OVERRIDE
     _AUTO = os.environ.get("KIRA_CRITIC_AUTO", "0") in ("1", "true", "True")
-    _DEFAULT_MODEL = os.environ.get("KIRA_CRITIC_MODEL", "claude-haiku-4.5")
+    _DEFAULT_MODEL = _default_critic_model()
     _MAX_DIFF = int(os.environ.get("KIRA_CRITIC_MAX_DIFF", "30000"))
     _PROVIDER_OVERRIDE = os.environ.get("KIRA_CRITIC_PROVIDER", "").strip()
