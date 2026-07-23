@@ -410,6 +410,13 @@ async def agent_health():
     except Exception as e:
         fallback_state = {"enabled": True, "error": type(e).__name__ + ": " + str(e)[:200]}
 
+    # Frugality guard state (expensive-tier daily usage).
+    try:
+        import agent_frugal
+        _frugal_state = agent_frugal.status()
+    except Exception as e:
+        _frugal_state = {"enabled": True, "error": type(e).__name__ + ": " + str(e)[:200]}
+
     # status classification
     status = "ok"
     reasons: list[str] = []
@@ -472,6 +479,7 @@ async def agent_health():
             "top_errors": top_errors,
         },
         "llm_fallback": fallback_state,
+        "frugal": _frugal_state,
     }
 
 
@@ -1183,6 +1191,20 @@ async def agent_endpoint(req: AgentRequest, request: Request):
                 yield ("data: " + json.dumps({
                     "type": "route", "model": model, "tier": "standard",
                     "error": str(_rex)[:200]}) + "\n\n").encode()
+        # Frugality guard: 'cheap-capable first'. Caps expensive-tier calls per
+        # day and downgrades gracefully instead of draining the balance. This
+        # is the lesson from burning an account's balance on opus probes — now
+        # structural, not a matter of remembering.
+        try:
+            import agent_frugal
+            guarded, frugal_note = agent_frugal.guard(model)
+            if guarded != model:
+                model = guarded
+            if frugal_note:
+                yield ("data: " + json.dumps({
+                    "type": "info", "message": frugal_note, "model": model}) + "\n\n").encode()
+        except Exception as _fex:
+            print(f"[frugal] guard skipped: {_fex}")
         baseline = agent_store.get_session_credits(sid, owner_id=user_id)
         agent_images = None
         if req.images:

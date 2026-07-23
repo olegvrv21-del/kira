@@ -347,3 +347,25 @@ def test_agent_endpoint_claude_live_when_key_set(monkeypatch):
     client = TestClient(app_mod.app)
     client.post("/agent", json={"prompt": "x", "model": "claude-sonnet-4-6", "session_id": "cl1"})
     assert captured["model"] == "claude-sonnet-4-6"
+
+
+def test_agent_endpoint_frugal_downgrades(monkeypatch):
+    """Over the expensive-tier daily cap, /agent downgrades the model and
+    emits an info note."""
+    import agent_runtime
+    import agent_frugal
+    captured = {}
+
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
+        captured["model"] = model
+        yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
+
+    monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
+    # Force the guard to always downgrade.
+    monkeypatch.setattr(agent_frugal, "guard",
+                        lambda m: ("gpt-5.4", "💸 downgraded to save balance"))
+    client = TestClient(app_mod.app)
+    r = client.post("/agent", json={"prompt": "x", "model": "gpt-5.6", "session_id": "frugal1"})
+    body = r.content.decode()
+    assert captured["model"] == "gpt-5.4"
+    assert "downgraded to save balance" in body
