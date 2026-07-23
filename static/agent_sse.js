@@ -107,6 +107,16 @@ export function createAgentRunner(opts) {
             messagesEl.appendChild(div);
             messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
           }
+          else if (j.type === 'recall') {
+            const div = document.createElement('div');
+            div.className = 'agent-stats';
+            div.style.color = '#909399';
+            const files = (j.files || []).join(', ');
+            const label = _lang() === 'ru' ? '\u{1f9e0} \u0432\u0441\u043f\u043e\u043c\u043d\u0438\u043b\u0430' : '\u{1f9e0} recalled';
+            div.textContent = `${label}: ${j.count}` + (files ? ` \u00b7 ${files}` : '');
+            messagesEl.appendChild(div);
+            messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
+          }
           else if (j.type === 'plan') { renderPlan(j.plan); }
           else if (j.type === 'iframe') {
             const empty = messagesEl.querySelector('.empty'); if (empty) empty.remove();
