@@ -1488,6 +1488,11 @@ def run_tool(name: str, args: dict[str, Any], cwd: str, sid: str) -> tuple[str, 
     fn = TOOLS.get(name)
     if fn is None:
         return "error", f"unknown tool: {name}", None
+    # Argument validation (schema) — same as host run_tool.
+    import agent_toolqa
+    arg_err = agent_toolqa.validate_args(name, args)
+    if arg_err:
+        return "error", f"INVALID ARGS for {name}: {arg_err}", None
     # Pre-call authorization (guardrails). Same logic as host run_tool.
     import agent_guardrails
     decision = agent_guardrails.evaluate(name, args)
@@ -1497,7 +1502,13 @@ def run_tool(name: str, args: dict[str, Any], cwd: str, sid: str) -> tuple[str, 
         result = fn(args, cwd, sid)
         if isinstance(result, tuple):
             text, images = result
-            return "success", text, images or None
-        return "success", result, None
+        else:
+            text, images = result, None
+        # Semantic status: demote success→error when the operation actually
+        # failed (exit!=0, TESTS=FAIL) so the agent doesn't reason on a lie.
+        status, reason = agent_toolqa.semantic_status(name, "success", text)
+        if status != "success" and reason:
+            text = f"{text}\n[operation failed: {reason}]"
+        return status, text, images or None
     except Exception as e:
         return "error", f"{type(e).__name__}: {e}", None

@@ -56,4 +56,6 @@ def test_prod_observe_tool_routing():
 def test_prod_observe_unknown_what_errors():
     out = agent_tools.run_tool("prod_observe", {"what": "rm_rf_slash"}, cwd=".")
     assert out[0] == "error"
-    assert "unknown what" in out[1]
+    # Now caught by schema validation (invalid enum) before dispatch, which is
+    # a clearer message than the tool's own 'unknown what'. Accept either.
+    assert ("unknown what" in out[1]) or ("must be one of" in out[1])

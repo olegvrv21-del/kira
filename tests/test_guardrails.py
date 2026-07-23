@@ -125,7 +125,8 @@ def test_run_tool_blocks_on_guardrail(monkeypatch):
     monkeypatch.delenv("KIRA_GUARDRAILS", raising=False)
     status, msg, _ = agent_tools.run_tool(
         "fs_write",
-        {"path": "/home/x/.ssh/authorized_keys", "content": "x"},
+        {"command": "create", "path": "/home/x/.ssh/authorized_keys",
+         "file_text": "x"},
         cwd="/tmp",
     )
     assert status == "error"

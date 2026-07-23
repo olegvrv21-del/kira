@@ -1186,7 +1186,7 @@ def test_run_tool_tuple_return(monkeypatch):
         return "text", [{"format": "png", "source": {"bytes": "YQ=="}}]
 
     monkeypatch.setitem(st.TOOLS, "execute_bash", tuple_fn)
-    status, text, imgs = st.run_tool("execute_bash", {}, cwd="/", sid="s")
+    status, text, imgs = st.run_tool("execute_bash", {"command": "x"}, cwd="/", sid="s")
     assert status == "success" and text == "text" and imgs
 
 
@@ -1195,5 +1195,5 @@ def test_run_tool_exception_to_error(monkeypatch):
         raise RuntimeError("bang")
 
     monkeypatch.setitem(st.TOOLS, "execute_bash", boom)
-    status, text, _ = st.run_tool("execute_bash", {}, cwd="/", sid="s")
+    status, text, _ = st.run_tool("execute_bash", {"command": "x"}, cwd="/", sid="s")
     assert status == "error" and "bang" in text
