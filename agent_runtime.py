@@ -76,19 +76,30 @@ MAX_SUBAGENT_TURNS = 12
 _BASE_SYSTEM_PROMPT = (ROOT / "agent_system_prompt.txt").read_text()
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(model: str | None = None) -> str:
+    # Live self-awareness block (actual model + provider + enabled capabilities)
+    # so Kira answers "who are you / what model" truthfully instead of
+    # hallucinating "ChatGPT via API". Fail-open: never break the prompt.
+    identity_block = ""
+    try:
+        import agent_identity
+        identity_block = agent_identity.render(model)
+    except Exception:
+        identity_block = ""
+    prompt = _BASE_SYSTEM_PROMPT.rstrip()
+    if identity_block:
+        prompt += "\n\n" + identity_block.rstrip() + "\n"
     skills_block = agent_skills.render_skills_section()
-    if not skills_block:
-        return _BASE_SYSTEM_PROMPT
-    return (
-        _BASE_SYSTEM_PROMPT.rstrip()
-        + "\n\n## Skills\n\n"
-        + "Skills are reusable playbooks for common task types. "
-        + "When a task matches a skill's description, call the `load_skill` tool "
-        + "to read its body BEFORE acting.\n\n"
-        + skills_block
-        + "\n"
-    )
+    if skills_block:
+        prompt += (
+            "\n\n## Skills\n\n"
+            + "Skills are reusable playbooks for common task types. "
+            + "When a task matches a skill's description, call the `load_skill` tool "
+            + "to read its body BEFORE acting.\n\n"
+            + skills_block
+            + "\n"
+        )
+    return prompt
 
 
 # NOTE: deliberately NOT a module-level cached snapshot. New skills created
@@ -809,7 +820,7 @@ async def run_agent(
     # Build canonical message list from caller's Q-dict history.
     messages: list = q_history_to_messages(history) if history else []
     if not messages:
-        messages.append(_M(role="system", content=_build_system_prompt()))
+        messages.append(_M(role="system", content=_build_system_prompt(model)))
 
     # Helper: keep the caller-visible Q-dict history in sync with `messages`.
     # We rewrite it in place so cached references (app.py's _AGENT_SESSIONS)
