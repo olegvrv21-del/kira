@@ -114,12 +114,21 @@ _Q_MODELS = [
     ),
 ]
 _U2_MODELS = [
+    _m("auto", "⚡ Авто", "Kira router", "auto", 0.0,
+       "Кира сама подбирает модель под сложность запроса: простое — дёшево, "
+       "сложное — сильной моделью.", ["Экономия", "Автовыбор"]),
     _m("gpt-5.4-mini", "GPT-5.4 mini", "Unity2 (OpenAI)", "haiku", 0.2,
        "Быстрая и дешёвая модель по умолчанию.", ["Скорость", "Низкая стоимость"]),
     _m("gpt-5.4", "GPT-5.4", "Unity2 (OpenAI)", "sonnet", 1.0,
        "Сбалансированная рабочая модель.", ["Код", "Анализ"]),
     _m("gpt-5.6", "GPT-5.6", "Unity2 (OpenAI)", "opus", 2.0,
        "Топовая модель для сложных задач.", ["Рассуждение", "Архитектура"]),
+    _m("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Unity2 (Anthropic)", "haiku", 0.5,
+       "Быстрая модель Claude, другой upstream-пул.", ["Скорость", "Резерв"]),
+    _m("claude-sonnet-4-6", "Claude Sonnet 4.6", "Unity2 (Anthropic)", "sonnet", 1.5,
+       "Сильная рабочая модель Claude для кода.", ["Код", "Анализ"]),
+    _m("claude-opus-4-8", "Claude Opus 4.8", "Unity2 (Anthropic)", "opus", 3.0,
+       "Топовая модель Claude для сложных задач.", ["Рассуждение", "Архитектура"]),
     _m("glm-5.2", "GLM 5.2", "Unity2 (Zhipu)", "sonnet", 0.5,
        "Дешёвая мощная альтернатива.", ["Код", "Цена"]),
 ]
@@ -1106,10 +1115,25 @@ async def agent_endpoint(req: AgentRequest, request: Request):
     model = req.model or DEFAULT_MODEL
     if model.startswith("q/"):
         model = model[2:]
-    # Dead upstreams (expired Kiro/Amazon Q). Remap any legacy Claude/kr/q model
-    # (incl. pinned ones stored in old sessions) to the working default.
-    if model.startswith(("kr/", "kiro/", "claude", "q/")):
-        model = DEFAULT_MODEL
+    # "auto" → request-aware routing: a cheap classifier picks the tier
+    # (simple/standard/hard) and maps it to a concrete model. Resolved below
+    # inside the stream so we can emit the chosen model + reason to the client.
+    route_auto = (model == "auto")
+    # Dead upstreams (expired Kiro/Amazon Q). Remap legacy kr/kiro/q models to
+    # the working default. Bare "claude*" ids are LIVE only when a dedicated
+    # Claude endpoint is configured (KIRA_CLAUDE_KEY / KIRA_ENDPOINTS); without
+    # it we still remap them, since the OpenAI-family key can't serve Claude.
+    if not route_auto:
+        if model.startswith(("kr/", "kiro/", "q/")):
+            model = DEFAULT_MODEL
+        elif model.startswith("claude"):
+            try:
+                from llm.endpoints import is_configured as _claude_cfg
+                claude_live = _claude_cfg()
+            except Exception:
+                claude_live = False
+            if not claude_live:
+                model = DEFAULT_MODEL
     sid = req.session_id or uuid.uuid4().hex[:12]
     # Ownership check: if caller supplied an existing sid, it must be theirs
     # (or legacy / NULL). Reject foreign sids early.
@@ -1136,10 +1160,29 @@ async def agent_endpoint(req: AgentRequest, request: Request):
         return StreamingResponse(err_gen(), media_type="text/event-stream")
 
     async def gen():
-        nonlocal hist
+        nonlocal hist, model
         if hist is None:
             hist = []
             _AGENT_SESSIONS[cache_key] = hist
+        # Request-aware routing: resolve "auto" to a concrete model via a cheap
+        # classifier, then tell the client what we picked (and why).
+        if route_auto:
+            try:
+                from llm import router as _router
+
+                async def _oneshot(p, *, model, system=None):
+                    return await agent_runtime._llm_one_shot(
+                        key_pool.current() or KIRO_API_KEY, p, model, system=system)
+
+                chosen, tier = await _router.route(req.prompt, llm_one_shot=_oneshot)
+                model = chosen
+                yield ("data: " + json.dumps({
+                    "type": "route", "model": model, "tier": tier}) + "\n\n").encode()
+            except Exception as _rex:
+                model = DEFAULT_MODEL
+                yield ("data: " + json.dumps({
+                    "type": "route", "model": model, "tier": "standard",
+                    "error": str(_rex)[:200]}) + "\n\n").encode()
         baseline = agent_store.get_session_credits(sid, owner_id=user_id)
         agent_images = None
         if req.images:

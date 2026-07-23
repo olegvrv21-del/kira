@@ -21,7 +21,7 @@ def test_models_have_metadata(app_client):
 def test_models_tiers_known(app_client):
     d = app_client.get("/models").json()
     tiers = {m["tier"] for m in d["models"]}
-    assert tiers <= {"opus", "sonnet", "haiku"}
+    assert tiers <= {"opus", "sonnet", "haiku", "auto"}
 
 
 def test_root_serves_html(app_client):

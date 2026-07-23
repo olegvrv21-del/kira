@@ -201,17 +201,37 @@ class OpenRouterProvider:
     ]
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        # `pinned` = credentials were passed explicitly (tests, subagents that
+        # hard-wire a key). When pinned we never do per-model endpoint routing,
+        # so existing behaviour/tests are untouched.
+        self._pinned = bool(api_key)
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "").strip()
         self.base_url = (base_url or os.environ.get("OPENROUTER_BASE_URL")
                          or OPENROUTER_BASE).rstrip("/")
 
-    def _headers(self) -> dict[str, str]:
-        if not self.api_key:
+    def _resolve(self, model: str) -> tuple[str, str]:
+        """Return (base_url, api_key) for `model`. Honours per-model routing
+        (llm/endpoints.py) unless this provider was constructed with an
+        explicit key."""
+        if self._pinned:
+            return self.base_url, self.api_key
+        try:
+            from .endpoints import resolve as _resolve_ep
+            ep = _resolve_ep(model)
+        except Exception:
+            ep = None
+        if ep and ep.api_key:
+            return ep.base_url or self.base_url, ep.api_key
+        return self.base_url, self.api_key
+
+    def _headers(self, api_key: str | None = None) -> dict[str, str]:
+        key = api_key if api_key is not None else self.api_key
+        if not key:
             raise RuntimeError("OPENROUTER_API_KEY not set")
         # HTTP-Referer / X-Title are recommended by OpenRouter for analytics
         # and so models can be shown as called from Kira.
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "HTTP-Referer": os.environ.get("KIRA_OPENROUTER_REFERER",
                                             "https://github.com/olegvrv21-del/kira"),
@@ -246,8 +266,11 @@ class OpenRouterProvider:
         acc = _ToolCallAccumulator()
         emitted_done = False
 
+        # Per-model credential/endpoint routing (no-op when pinned).
+        base_url, api_key = self._resolve(model)
+
         try:
-            headers = self._headers()
+            headers = self._headers(api_key)
         except RuntimeError as e:
             yield StreamEvent(type="error", text=str(e))
             yield StreamEvent(type="done")
@@ -256,7 +279,7 @@ class OpenRouterProvider:
         try:
             async with httpx.AsyncClient(timeout=timeout) as cx:
                 async with cx.stream(
-                    "POST", f"{self.base_url}/chat/completions",
+                    "POST", f"{base_url}/chat/completions",
                     headers=headers, json=body,
                 ) as r:
                     if r.status_code >= 400:

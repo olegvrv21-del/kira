@@ -282,3 +282,59 @@ def test_registered_in_default_registry():
     assert "openrouter" in available()
     p = get_provider("openrouter")
     assert p.name == "openrouter"
+
+
+# ---- per-model endpoint routing -------------------------------------------
+
+
+def test_env_driven_provider_routes_claude_to_dedicated_key(monkeypatch):
+    """A non-pinned provider (no explicit api_key) resolves credentials per
+    model: claude-* → KIRA_CLAUDE_KEY, everything else → OPENROUTER_API_KEY."""
+    captured = {}
+
+    def _handler(req):
+        captured["auth"] = req.headers.get("authorization")
+        captured["url"] = str(req.url)
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+            "[DONE]"), headers={"content-type": "text/event-stream"})
+
+    transport = httpx.MockTransport(_handler)
+    real = httpx.AsyncClient
+    monkeypatch.setattr("httpx.AsyncClient",
+                        lambda *a, **kw: real(*a, **{**kw, "transport": transport}))
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "gpt-key")
+    monkeypatch.setenv("KIRA_CLAUDE_KEY", "claude-key")
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://unity2.ai/v1")
+
+    # Non-pinned: constructed with no api_key → env resolution active.
+    p = OpenRouterProvider()
+
+    _run(p.stream([Message(role="user", content="hi")], [], model="claude-sonnet-4-6"))
+    assert captured["auth"] == "Bearer claude-key"
+    assert captured["url"].startswith("https://unity2.ai/v1")
+
+    _run(p.stream([Message(role="user", content="hi")], [], model="gpt-5.4-mini"))
+    assert captured["auth"] == "Bearer gpt-key"
+
+
+def test_pinned_provider_ignores_routing(monkeypatch):
+    """An explicitly-keyed provider never does per-model routing (tests etc.)."""
+    captured = {}
+
+    def _handler(req):
+        captured["auth"] = req.headers.get("authorization")
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+            "[DONE]"), headers={"content-type": "text/event-stream"})
+
+    transport = httpx.MockTransport(_handler)
+    real = httpx.AsyncClient
+    monkeypatch.setattr("httpx.AsyncClient",
+                        lambda *a, **kw: real(*a, **{**kw, "transport": transport}))
+    monkeypatch.setenv("KIRA_CLAUDE_KEY", "claude-key")
+
+    p = OpenRouterProvider(api_key="pinned-key")
+    _run(p.stream([Message(role="user", content="hi")], [], model="claude-sonnet-4-6"))
+    assert captured["auth"] == "Bearer pinned-key"

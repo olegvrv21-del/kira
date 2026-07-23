@@ -95,6 +95,18 @@ export function createAgentRunner(opts) {
           if (!line.startsWith('data: ')) continue;
           let j; try { j = JSON.parse(line.slice(6)); } catch { continue; }
           if (j.type === 'meta') { state.agentSessionId = j.session_id; }
+          else if (j.type === 'route') {
+            const div = document.createElement('div');
+            div.className = 'agent-stats';
+            div.style.color = '#67c23a';
+            const tierName = { simple: _lang() === 'ru' ? 'простой' : 'simple',
+                               standard: _lang() === 'ru' ? 'обычный' : 'standard',
+                               hard: _lang() === 'ru' ? 'сложный' : 'hard' }[j.tier] || j.tier;
+            const pick = _lang() === 'ru' ? 'выбрана модель' : 'picked model';
+            div.textContent = `⚡ ${pick}: ${j.model} · ${tierName}`;
+            messagesEl.appendChild(div);
+            messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
+          }
           else if (j.type === 'plan') { renderPlan(j.plan); }
           else if (j.type === 'iframe') {
             const empty = messagesEl.querySelector('.empty'); if (empty) empty.remove();

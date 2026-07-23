@@ -306,3 +306,44 @@ def test_agent_endpoint_remaps_dead_models(monkeypatch):
         client = TestClient(app_mod.app)
         client.post("/agent", json={"prompt": "x", "model": dead, "session_id": "dead"})
         assert captured["model"] == app_mod.DEFAULT_MODEL, dead
+
+
+def test_agent_endpoint_auto_routes(monkeypatch):
+    """model='auto' triggers the router: a route event is emitted and the
+    resolved model (not 'auto') is passed to run_agent."""
+    import agent_runtime
+    import llm.router as _router
+
+    captured = {}
+
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
+        captured["model"] = model
+        yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
+
+    async def fake_route(prompt, *, llm_one_shot=None):
+        return ("gpt-5.4-mini", "simple")
+
+    monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
+    monkeypatch.setattr(_router, "route", fake_route)
+    client = TestClient(app_mod.app)
+    r = client.post("/agent", json={"prompt": "привет", "model": "auto", "session_id": "auto1"})
+    body = r.content.decode()
+    assert '"type": "route"' in body
+    assert '"model": "gpt-5.4-mini"' in body
+    assert captured["model"] == "gpt-5.4-mini"
+
+
+def test_agent_endpoint_claude_live_when_key_set(monkeypatch):
+    """With KIRA_CLAUDE_KEY set, a bare claude model is NOT remapped."""
+    import agent_runtime
+    captured = {}
+
+    async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
+        captured["model"] = model
+        yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
+
+    monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
+    monkeypatch.setenv("KIRA_CLAUDE_KEY", "claude-key")
+    client = TestClient(app_mod.app)
+    client.post("/agent", json={"prompt": "x", "model": "claude-sonnet-4-6", "session_id": "cl1"})
+    assert captured["model"] == "claude-sonnet-4-6"
