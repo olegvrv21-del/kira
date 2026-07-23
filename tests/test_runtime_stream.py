@@ -616,3 +616,36 @@ async def test_plan_loop_guard_after_two_plan_only_rounds(monkeypatch, tmp_path)
         f"expected the plan-loop reason, got: {[n.get('reason') for n in nudges]}"
     dones = [e for e in events if e.get("type") == "done"]
     assert dones, "no done event after guard"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_auto_recall_injects_memory(monkeypatch, tmp_path):
+    """Auto-recall injects a memory system message and emits a recall event."""
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    import agent_recall
+
+    monkeypatch.setattr(
+        agent_recall, "recall",
+        lambda prompt, **kw: ("## Relevant memory\n- [MEMORY.md]\n  Kira uses Unity2.",
+                              [{"file": "MEMORY.md", "score": 2.0}]),
+    )
+    fake = _stream([("assistantResponseEvent", {"content": "ok", "messageId": "m1"})])
+    with patch.object(q_client, "stream_q", fake):
+        events = await _collect(ar.run_agent("k", "how does kira reach llm?", session_id="unit_recall"))
+    recalls = [e for e in events if e.get("type") == "recall"]
+    assert recalls, "expected a recall event"
+    assert recalls[0]["count"] == 1
+    assert "MEMORY.md" in recalls[0]["files"]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_no_recall_when_empty(monkeypatch, tmp_path):
+    """When recall finds nothing, no recall event is emitted and run proceeds."""
+    monkeypatch.setattr(ar, "WORKSPACES", tmp_path)
+    import agent_recall
+    monkeypatch.setattr(agent_recall, "recall", lambda prompt, **kw: (None, []))
+    fake = _stream([("assistantResponseEvent", {"content": "ok", "messageId": "m1"})])
+    with patch.object(q_client, "stream_q", fake):
+        events = await _collect(ar.run_agent("k", "hi there friend", session_id="unit_norecall"))
+    assert not [e for e in events if e.get("type") == "recall"]
+    assert events[-1]["type"] == "done"

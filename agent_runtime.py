@@ -849,6 +849,22 @@ async def run_agent(
     current_user = _M(role="user", content=prompt or "")
     pending_images = []
 
+    # Automatic memory recall: start the request already remembering. Search
+    # long-term memory with the prompt and inject the most relevant snippets as
+    # one system message. Cheap (local BM25), once per call, fail-open.
+    try:
+        import agent_recall
+        _recall_block, _recall_hits = agent_recall.recall(prompt or "")
+        if _recall_block:
+            messages.append(_M(role="system", content=_recall_block))
+            yield _sse({
+                "type": "recall",
+                "count": len(_recall_hits),
+                "files": sorted({h.get("file", "?") for h in _recall_hits}),
+            })
+    except Exception as _rex:
+        print(f"[recall] skipped: {_rex}")
+
     cancel_ev = _register_cancel(session_id)
 
     def _is_cancelled() -> bool:
