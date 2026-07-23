@@ -641,6 +641,12 @@ def run_tool(name: str, args: dict[str, Any], cwd: str) -> tuple[str, str, list[
     fn = TOOLS.get(name)
     if fn is None:
         return "error", f"unknown tool: {name}", None
+    # Argument validation (schema) — actionable error the model can fix in one
+    # turn, instead of a raw KeyError/TypeError deep inside the tool.
+    import agent_toolqa
+    arg_err = agent_toolqa.validate_args(name, args)
+    if arg_err:
+        return "error", f"INVALID ARGS for {name}: {arg_err}", None
     # Pre-call authorization (guardrails). Defense-in-depth on top of kill-switch.
     import agent_guardrails
     decision = agent_guardrails.evaluate(name, args)
@@ -650,7 +656,13 @@ def run_tool(name: str, args: dict[str, Any], cwd: str) -> tuple[str, str, list[
         result = fn(args, cwd)
         if isinstance(result, tuple):
             text, images = result
-            return "success", text, images or None
-        return "success", result, None
+        else:
+            text, images = result, None
+        # Semantic status: a tool that 'ran' can still have failed (exit!=0,
+        # TESTS=FAIL). Demote success→error so metrics/reasoning stay honest.
+        status, reason = agent_toolqa.semantic_status(name, "success", text)
+        if status != "success" and reason:
+            text = f"{text}\n[operation failed: {reason}]"
+        return status, text, images or None
     except Exception as e:
         return "error", f"{type(e).__name__}: {e}", None

@@ -596,7 +596,7 @@ def test_run_tool_tuple_return(monkeypatch):
         return ("ok-text", [{"format": "png", "source": {"bytes": "YQ=="}}])
 
     monkeypatch.setitem(at.TOOLS, "execute_bash", returns_tuple)
-    status, text, imgs = at.run_tool("execute_bash", {}, cwd=".")
+    status, text, imgs = at.run_tool("execute_bash", {"command": "x"}, cwd=".")
     assert status == "success" and text == "ok-text"
     assert imgs and imgs[0]["format"] == "png"
 
@@ -606,7 +606,7 @@ def test_run_tool_exception_to_error(monkeypatch):
         raise RuntimeError("kaboom")
 
     monkeypatch.setitem(at.TOOLS, "execute_bash", boom)
-    status, text, _ = at.run_tool("execute_bash", {}, cwd=".")
+    status, text, _ = at.run_tool("execute_bash", {"command": "x"}, cwd=".")
     assert status == "error" and "kaboom" in text
 
 
