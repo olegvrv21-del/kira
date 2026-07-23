@@ -272,8 +272,10 @@ def test_agent_endpoint_q_prefix_strip(monkeypatch):
 
     monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
     client = TestClient(app_mod.app)
-    client.post("/agent", json={"prompt": "x", "model": "q/claude-opus-4.7", "session_id": "qpfx"})
-    assert captured["model"] == "claude-opus-4.7"
+    # Use a live model so the dead-upstream remap doesn't rewrite it; we only
+    # assert the "q/" prefix is stripped.
+    client.post("/agent", json={"prompt": "x", "model": "q/gpt-5.4", "session_id": "qpfx"})
+    assert captured["model"] == "gpt-5.4"
 
 
 def test_agent_endpoint_uses_default_model(monkeypatch):
@@ -287,4 +289,20 @@ def test_agent_endpoint_uses_default_model(monkeypatch):
     monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
     client = TestClient(app_mod.app)
     client.post("/agent", json={"prompt": "x", "session_id": "defmod"})
-    assert captured["model"] == "claude-opus-4.7"
+    assert captured["model"] == app_mod.DEFAULT_MODEL
+
+
+def test_agent_endpoint_remaps_dead_models(monkeypatch):
+    """Legacy Kiro/Claude models (dead upstream) are remapped to DEFAULT_MODEL."""
+    import agent_runtime
+    for dead in ("kr/claude-sonnet-4.5", "claude-opus-4.7", "kiro/claude-haiku-4.5"):
+        captured = {}
+
+        async def fake_run(api_key, prompt, model, session_id=None, history=None, images=None, **_kw):
+            captured["model"] = model
+            yield ("data: " + json.dumps({"type": "done"}) + "\n\n").encode()
+
+        monkeypatch.setattr(agent_runtime, "run_agent", fake_run)
+        client = TestClient(app_mod.app)
+        client.post("/agent", json={"prompt": "x", "model": dead, "session_id": "dead"})
+        assert captured["model"] == app_mod.DEFAULT_MODEL, dead

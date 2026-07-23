@@ -25,12 +25,12 @@ import agent_store
 _ERR_VERBOSE = os.environ.get("KIRA_ERR_VERBOSE") == "1"
 
 OMNI_URL = os.environ.get("OMNI_URL", "http://localhost:8128/v1")
-OMNI_KEY = os.environ.get("OPENAI_API_KEY", "")
+OMNI_KEY = os.environ.get("OMNI_KEY") or os.environ.get("OPENAI_API_KEY", "")
 KIRO_API_KEY = os.environ.get("KIRO_API_KEY", "")
 from agent_keys import key_pool  # noqa: E402
 
 KIRO_Q_URL = "https://q.us-east-1.amazonaws.com/"
-DEFAULT_MODEL = "q/claude-opus-4.7" if KIRO_API_KEY else "kr/claude-sonnet-4.5"
+DEFAULT_MODEL = os.environ.get("KIRA_DEFAULT_MODEL", "gpt-5.4-mini")
 SYSTEM_PROMPT = "Ты — Кира, старший инженер-напарник. Отвечаешь по-русски, кратко и по делу, без эмодзи."
 
 
@@ -113,7 +113,17 @@ _Q_MODELS = [
         ["Скорость", "Низкая стоимость"],
     ),
 ]
-MODELS = (_Q_MODELS if KIRO_API_KEY else []) + _KR_MODELS
+_U2_MODELS = [
+    _m("gpt-5.4-mini", "GPT-5.4 mini", "Unity2 (OpenAI)", "haiku", 0.2,
+       "Быстрая и дешёвая модель по умолчанию.", ["Скорость", "Низкая стоимость"]),
+    _m("gpt-5.4", "GPT-5.4", "Unity2 (OpenAI)", "sonnet", 1.0,
+       "Сбалансированная рабочая модель.", ["Код", "Анализ"]),
+    _m("gpt-5.6", "GPT-5.6", "Unity2 (OpenAI)", "opus", 2.0,
+       "Топовая модель для сложных задач.", ["Рассуждение", "Архитектура"]),
+    _m("glm-5.2", "GLM 5.2", "Unity2 (Zhipu)", "sonnet", 0.5,
+       "Дешёвая мощная альтернатива.", ["Код", "Цена"]),
+]
+MODELS = _U2_MODELS + (_Q_MODELS if KIRO_API_KEY else []) + _KR_MODELS
 MODEL_IDS = {m["id"] for m in MODELS}
 
 from contextlib import asynccontextmanager
@@ -1074,9 +1084,13 @@ async def agent_endpoint(req: AgentRequest, request: Request):
     if not KIRO_API_KEY:
         return JSONResponse({"error": "KIRO_API_KEY not set"}, status_code=400)
     user_id = agent_auth.current_user_id(request)
-    model = req.model or "claude-opus-4.7"
+    model = req.model or DEFAULT_MODEL
     if model.startswith("q/"):
         model = model[2:]
+    # Dead upstreams (expired Kiro/Amazon Q). Remap any legacy Claude/kr/q model
+    # (incl. pinned ones stored in old sessions) to the working default.
+    if model.startswith(("kr/", "kiro/", "claude", "q/")):
+        model = DEFAULT_MODEL
     sid = req.session_id or uuid.uuid4().hex[:12]
     # Ownership check: if caller supplied an existing sid, it must be theirs
     # (or legacy / NULL). Reject foreign sids early.
