@@ -77,6 +77,12 @@ def _default_registry() -> None:
             return OpenRouterProvider()
         _REGISTRY["openrouter"] = _openrouter
 
+    if "fallback" not in _REGISTRY:
+        def _fallback():
+            from .fallback_provider import FallbackProvider
+            return FallbackProvider()
+        _REGISTRY["fallback"] = _fallback
+
     # Stubs — documented extension points. They raise NotImplementedError
     # until a client opts in and provides credentials/SDK config.
     if "anthropic" not in _REGISTRY:
