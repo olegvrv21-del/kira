@@ -153,3 +153,30 @@ def test_health_handles_keys_exception(client, monkeypatch):
     r = client.get("/agent/health")
     d = r.json()
     assert "error" in d["keys"]
+
+
+def test_health_includes_llm_fallback_key(client):
+    """/agent/health always surfaces an llm_fallback block."""
+    r = client.get("/agent/health")
+    d = r.json()
+    assert "llm_fallback" in d
+    # Disabled by default (KIRA_LLM_PROVIDER != 'fallback' in tests).
+    assert d["llm_fallback"].get("enabled") in (True, False)
+
+
+def test_health_critical_on_balance_exhausted(client, monkeypatch):
+    """When the fallback chain reports balance exhaustion, status→critical."""
+    monkeypatch.setenv("KIRA_LLM_PROVIDER", "fallback")
+    from llm.fallback_provider import STATUS as FB
+    monkeypatch.setattr(FB, "balance_exhausted", True, raising=False)
+    monkeypatch.setattr(FB, "balance_target", "openrouter:gpt-5.4-mini", raising=False)
+    try:
+        r = client.get("/agent/health")
+        d = r.json()
+        assert d["status"] == "critical"
+        assert d["llm_fallback"]["enabled"] is True
+        assert d["llm_fallback"]["balance_exhausted"] is True
+        assert any("balance exhausted" in reason.lower() for reason in d["reasons"])
+    finally:
+        FB.balance_exhausted = False
+        FB.balance_target = ""

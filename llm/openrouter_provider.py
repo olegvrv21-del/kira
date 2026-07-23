@@ -261,9 +261,18 @@ class OpenRouterProvider:
                 ) as r:
                     if r.status_code >= 400:
                         err_body = await r.aread()
+                        try:
+                            _body_txt = err_body.decode("utf-8", "replace")
+                        except Exception:
+                            _body_txt = repr(err_body[:400])
                         yield StreamEvent(
                             type="error",
-                            text=f"openrouter HTTP {r.status_code}: {err_body[:400]!r}",
+                            text=f"openrouter HTTP {r.status_code}: {_body_txt[:400]!r}",
+                            # Structured fields let FallbackProvider classify the
+                            # failure (retry / fallover / balance / fatal) without
+                            # brittle string parsing.
+                            meta={"http_status": r.status_code,
+                                  "body": _body_txt[:800]},
                         )
                         yield StreamEvent(type="done")
                         emitted_done = True
@@ -310,7 +319,8 @@ class OpenRouterProvider:
             raise
         except Exception as e:
             yield StreamEvent(type="error",
-                              text=f"openrouter stream failed: {type(e).__name__}: {e}")
+                              text=f"openrouter stream failed: {type(e).__name__}: {e}",
+                              meta={"exception": type(e).__name__, "body": str(e)[:800]})
         finally:
             # Final flush in case the upstream closed without a finish_reason.
             for tc in acc.flush():

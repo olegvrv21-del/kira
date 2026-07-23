@@ -391,6 +391,16 @@ async def agent_health():
     except Exception:
         success_rate, total_24h, fail_24h, hook_denies_24h, top_errors = None, 0, 0, 0, []
 
+    # LLM fallback chain state (only meaningful when KIRA_LLM_PROVIDER=fallback).
+    # Read straight from the shared module status — no extra I/O.
+    fallback_state: dict = {"enabled": False}
+    try:
+        if os.environ.get("KIRA_LLM_PROVIDER") == "fallback":
+            from llm.fallback_provider import STATUS as _FB
+            fallback_state = {"enabled": True, **_FB.snapshot()}
+    except Exception as e:
+        fallback_state = {"enabled": True, "error": type(e).__name__ + ": " + str(e)[:200]}
+
     # status classification
     status = "ok"
     reasons: list[str] = []
@@ -416,6 +426,14 @@ async def agent_health():
         if status == "ok":
             status = "degraded"
         reasons.append(f"24h tool success_rate {success_rate:.0%} below 50%")
+    # LLM balance exhausted on the active target → critical (fires TG alert).
+    if fallback_state.get("balance_exhausted"):
+        status = "critical"
+        reasons.append(f"LLM balance exhausted on {fallback_state.get('balance_target') or 'active target'}")
+    elif fallback_state.get("banned"):
+        if status == "ok":
+            status = "degraded"
+        reasons.append(f"LLM fallback active: {len(fallback_state['banned'])} target(s) banned")
 
     return {
         "ok": True,
@@ -444,6 +462,7 @@ async def agent_health():
             "hook_denies": hook_denies_24h,
             "top_errors": top_errors,
         },
+        "llm_fallback": fallback_state,
     }
 
 
