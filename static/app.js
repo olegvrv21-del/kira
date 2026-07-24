@@ -23,6 +23,8 @@ import { createAgentSessions } from './sessions.js';
 import { createComposer } from './composer.js';
 import { createExporters } from './exporters.js';
 import { isNetworkError, waitForConnection } from './net_status.js';
+import { renderLlmError } from './llm_errors.js';
+import { initHealthBadge } from './health_badge.js';
 
 installFetchInterceptor();
 
@@ -117,6 +119,7 @@ installFetchInterceptor();
         lang = b.dataset.lang;
         localStorage.setItem(LS_LANG, lang);
         applyI18n();
+        if (_healthBadge) _healthBadge.repaintLang();
         if (document.getElementById('dashboard').style.display === 'block') loadUsage();
       });
     });
@@ -168,6 +171,11 @@ installFetchInterceptor();
       renderMenu();
     });
     modelBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+    // Health/spend chip next to the model selector.
+    const _healthBadge = initHealthBadge({
+      el: document.getElementById('health-chip'),
+      getLang: () => lang,
+    });
     document.addEventListener('click', (e) => {
       if (!menu.contains(e.target) && e.target !== modelBtn) menu.classList.remove('open');
     });
@@ -550,7 +558,7 @@ installFetchInterceptor();
         });
         if (!r.ok) {
           const err = await r.text();
-          asst.txt.textContent = `${t('error_prefix')} ${r.status}: ${err}`;
+          renderLlmError(asst.txt, r.status, err, lang);
           asst.wrap.classList.add('error');
           throw new Error(err);
         }
@@ -570,9 +578,9 @@ installFetchInterceptor();
               if (j.error) {
                 let msg = (typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
                 // Upstream 4xx/5xx bodies (e.g. Q ValidationException) ride on
-                // `j.body` — surface them verbatim so failures stop being blind.
+                // `j.body` — fold them into the raw detail for classification.
                 if (j.body) msg += '\n\n' + (typeof j.body === 'string' ? j.body : JSON.stringify(j.body, null, 2));
-                asst.txt.textContent = `${t('error_prefix')}: ` + msg;
+                renderLlmError(asst.txt, j.status || 0, msg, lang);
                 asst.wrap.classList.add('error');
                 continue;
               }

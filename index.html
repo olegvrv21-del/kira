@@ -806,6 +806,18 @@
   /* model pin indicator */
   .model-btn.pinned { border-color: var(--orange) !important; }
   .model-btn .pin-mark { color: var(--orange); font-size: 10px; margin-left: 2px; }
+  /* health / spend chip */
+  .health-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; line-height: 1; white-space: nowrap;
+    padding: 5px 9px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.04); color: var(--muted);
+    cursor: default; user-select: none;
+  }
+  .health-chip.warn   { color: #f0b429; border-color: rgba(240,180,41,0.5);  background: rgba(240,180,41,0.08); }
+  .health-chip.danger { color: #ff6b6b; border-color: rgba(255,107,107,0.55); background: rgba(255,107,107,0.10); }
+  @media (max-width: 640px) { .health-chip { display: none; } }
 
   /* === mobile overrides (placed after base rules so cascade wins) === */
   @media (max-width: 720px) {
@@ -1072,6 +1084,7 @@
           </button>
           <input type="file" id="file" multiple>
           <div class="spacer"></div>
+          <span id="health-chip" class="health-chip" title=""></span>
           <div class="menu-wrap">
             <button type="button" id="model-btn" class="sq-btn model-btn">
               <span class="dot"></span>
